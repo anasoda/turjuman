@@ -110,19 +110,25 @@ describe("بناء صفوف الاستيراد", () => {
   });
 
   it("إن غاب عمود الواتساب يُعتمد رقم الاتصال", () => {
-    const data = [["الاسم الرباعي", "اسم ولي الأمر", "رقم الاتصال"], ["محمد أحمد سعيد علي", "أحمد سعيد", "0599876543"]];
+    const data = [["الاسم الرباعي", "تاريخ الميلاد", "اسم ولي الأمر", "رقم الاتصال"], ["محمد أحمد سعيد علي", "2012-05-04", "أحمد سعيد", "0599876543"]];
     const built = buildImportRows(data, detectMapping(data[0], true), { header: true, defaultDirection: "descending", defaultPlan: 10 });
     expect(built[0].student.guardianWaNational).toBe("0599876543");
     expect(built[0].problem).toBe("");
   });
 
   it("ولي الأمر إجباري: بلا اسم أو بلا رقم/هوية تُرفض الصف", () => {
-    const noGuardian = [["الاسم الرباعي"], ["محمد أحمد سعيد علي"]];
+    const noGuardian = [["الاسم الرباعي", "تاريخ الميلاد"], ["محمد أحمد سعيد علي", "2012-05-04"]];
     const a = buildImportRows(noGuardian, detectMapping(noGuardian[0], true), { header: true, defaultDirection: "descending", defaultPlan: 10 });
     expect(a[0].problem).toBe("اسم ولي الأمر مطلوب");
-    const noPhone = [["الاسم الرباعي", "اسم ولي الأمر"], ["محمد أحمد سعيد علي", "أحمد سعيد"]];
+    const noPhone = [["الاسم الرباعي", "تاريخ الميلاد", "اسم ولي الأمر"], ["محمد أحمد سعيد علي", "2012-05-04", "أحمد سعيد"]];
     const b = buildImportRows(noPhone, detectMapping(noPhone[0], true), { header: true, defaultDirection: "descending", defaultPlan: 10 });
-    expect(b[0].problem).toBe("رقم واتساب ولي الأمر أو هويته مطلوب");
+    expect(b[0].problem).toBe("رقم واتساب ولي الأمر (أو اتصاله) مطلوب، 7 خانات على الأقل");
+  });
+
+  it("تاريخ الميلاد إجباري كنموذج الإضافة", () => {
+    const data = [["الاسم الرباعي", "اسم ولي الأمر", "رقم الاتصال"], ["محمد أحمد سعيد علي", "أحمد سعيد", "0599876543"]];
+    const built = buildImportRows(data, detectMapping(data[0], true), { header: true, defaultDirection: "descending", defaultPlan: 10 });
+    expect(built[0].problem).toBe("تاريخ الميلاد مفقود أو غير صالح");
   });
 
   it("مقدمة الواتساب من العمود إن وُجد", () => {

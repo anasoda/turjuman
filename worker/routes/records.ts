@@ -17,12 +17,12 @@ const pos = z.object({ surah: z.number().int().min(1).max(114), ayah: z.number()
 const dailySchema = z.object({
   studentId: z.string().min(1),
   date: z.string().regex(DATE_RE, "التاريخ غير صالح"),
-  attendance: z.enum(["present", "absent", "excused"]),
+  attendance: z.enum(["present", "absent", "excused", "late"]),
   from: pos.nullable().default(null),
   to: pos.nullable().default(null),
   grade: z.string().max(30).default(""),
   note: z.string().trim().max(500).default("")
-});
+}).refine((b) => !["excused", "late"].includes(b.attendance) || b.note.length >= 2, { message: "اكتب سبب العذر أو التأخر (ملاحظة إجبارية)", path: ["note"] });
 
 const DAILY_SELECT = `SELECT d.id, d.student_id AS studentId, d.date, d.attendance, d.direction,
         d.from_surah AS fromSurah, d.from_ayah AS fromAyah, d.to_surah AS toSurah, d.to_ayah AS toAyah,
@@ -75,7 +75,8 @@ dailyRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_manage
 
   let verses = 0, pages = 0;
   let from: Position | null = null, to: Position | null = null;
-  if (b.attendance !== "absent") {
+  // الغائب (بعذر أو دونه) لا تسميع له؛ الحاضر والمتأخر يُسجَّل تسميعهما
+  if (b.attendance === "present" || b.attendance === "late") {
     if (!b.from || !b.to) fail(400, "حدّد بداية التسميع ونهايته");
     from = b.from; to = b.to;
     if (!isValidRange(student.direction, from, to)) fail(400, "نهاية التسميع يجب ألا تسبق بدايته وفق اتجاه حفظ الطالب");

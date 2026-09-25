@@ -31,6 +31,7 @@ describe("قراءة ملف xlsx حقيقي", () => {
     expect(built[0].student).toMatchObject({ name: "محمد أحمد سعيد علي", nationalId: "401234567", birth: "2023-03-15", gender: "male", guardianCallPhone: "599876543", guardianWaNational: "599876543" });
     expect(built[1].student).toMatchObject({ name: "سارة خالد محمود حسن", nationalId: "407654321", gender: "female", birth: "" });
     // الـ fixture القديم بلا اسم ولي أمر: صار مشكلة إجبارية (§15.7)
-    expect(built.every((r) => r.problem === "اسم ولي الأمر مطلوب")).toBe(true);
+    expect(built[0].problem).toBe("اسم ولي الأمر مطلوب");
+    expect(built[1].problem).toBe("تاريخ الميلاد مفقود أو غير صالح");
   });
 });

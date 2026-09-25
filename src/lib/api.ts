@@ -14,7 +14,8 @@ interface Options {
   body?: unknown;
 }
 
-export interface Queued { ok: true; queued: true }
+/** `reason: "login"` = حُفظ لأن الجلسة انتهت (لا لانقطاع الشبكة) ويُرسل بعد تسجيل الدخول */
+export interface Queued { ok: true; queued: true; reason?: "offline" | "login" }
 export const isQueued = (r: unknown): r is Queued => !!r && typeof r === "object" && (r as Queued).queued === true;
 
 let currentUserId = "";
@@ -71,17 +72,20 @@ async function cachedGet<T>(path: string): Promise<T> {
 /** كتابة ميدانية: تُرسل الآن، وإن انقطعت الشبكة تُحفظ في صندوق الصادر وتُرسل لاحقاً. */
 async function queueablePost<T>(path: string, body: unknown): Promise<T | Queued> {
   const payload = path === "/api/daily" ? body : { id: crypto.randomUUID(), ...(body as object) };
+  let reason: "offline" | "login" = "offline";
   if (navigator.onLine) {
     try {
       return await request<T>(path, "POST", payload);
     } catch (e) {
       // انقطاع الشبكة أو انتهاء الجلسة: يُحفظ محلياً ويُرسل بعد عودة الاتصال/الدخول
       if (!(e instanceof ApiError && (e.status === 0 || e.status === 401))) throw e;
+      if (e.status === 401) reason = "login";
     }
   }
   await enqueue(currentUserId, path, payload);
-  setSyncState({ online: false });
-  return { ok: true, queued: true };
+  // انتهاء الجلسة ليس انقطاعاً: لا نعلن «بلا إنترنت» والاتصال سليم
+  if (reason === "offline") setSyncState({ online: false });
+  return { ok: true, queued: true, reason };
 }
 
 export async function api<T = unknown>(path: string, opts: Options = {}): Promise<T> {

@@ -145,6 +145,7 @@ function GuardianDetail({ g, onClose, onChanged }: { g: Guardian; onClose: () =>
   if (mode === "children") {
     return (
       <Sheet title={`أبناء ${g.name}`} onClose={() => setMode("")}>
+        <p className="muted" style={{ margin: 0, fontSize: ".85rem" }}>يمكن إضافة أبناء من ولي آخر (ينتقلون إلى هذا الولي). ولا يمكن إزالة ابن دون نقله إلى ولي أمر آخر، لأن بيانات الولي إجبارية لكل طالب.</p>
         <ChildrenPicker value={studentIds} onChange={setStudentIds} />
         <button className="btn" type="button" disabled={busy} onClick={async () => {
           if (await run(() => api(`/api/guardians/${g.id}/children`, { method: "PUT", body: { studentIds } }), "تم تحديث قائمة الأبناء")) onChanged();

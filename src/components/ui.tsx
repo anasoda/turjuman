@@ -87,7 +87,7 @@ export function useAction() {
       setBusy(true);
       try {
         const result = await fn();
-        if (isQueued(result)) toast("حُفظ على الجهاز وسيُرسل تلقائياً عند عودة الاتصال");
+        if (isQueued(result)) toast(result.reason === "login" ? "انتهت جلستك: حُفظ على الجهاز وسيُرسل بعد تسجيل الدخول" : "حُفظ على الجهاز وسيُرسل تلقائياً عند عودة الاتصال");
         else if (okMessage) toast(okMessage);
         return true;
       } catch (e) {

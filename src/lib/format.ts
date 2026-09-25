@@ -11,7 +11,7 @@ export const todayIso = (): string =>
 
 export const monthIso = (): string => todayIso().slice(0, 7);
 
-export const ATTENDANCE_LABELS = { present: "حاضر", absent: "غائب", excused: "بعذر" } as const;
+export const ATTENDANCE_LABELS = { present: "حاضر", absent: "غائب", excused: "بعذر", late: "متأخر" } as const;
 export type Attendance = keyof typeof ATTENDANCE_LABELS;
 
 export const TEST_STATUS_LABELS: Record<string, string> = { proposed: "مقترح", approved: "معتمد", rejected: "مرفوض", completed: "منتهٍ" };

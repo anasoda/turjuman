@@ -59,7 +59,9 @@
 - `loadTarget` في `routes/staff.ts` يشتق الدور الفعلي **قبل** `canManage`، وإلا أدار السكرتيرُ مديرَ المرحلة على أنه معلّم.
 - `circles.checkTeachers` و`/api/stats/teachers` يستثنيان `stage_managers` حتى لا يظهر مدير المرحلة معلّماً قابلاً للإسناد.
 
-**مطبَّقة محلياً (هجرة 0009) — لم تُطبَّق على الإنتاج بعد:** إعادة بناء `circle_teachers` بلا `UNIQUE(teacher_id)` (آمنة: لا مفتاح أجنبي يشير إليه) مع فهرس `idx_circle_teachers_teacher`. **أي استعلام يصل معلّماً بحلقته عبر `LEFT JOIN circle_teachers` سيكرّر المعلّم بعدد حلقاته** — اجمعها بـ `group_concat` كما في `routes/staff.ts` و`/api/stats/teachers`.
+**مطبَّقة محلياً (هجرة 0010: `daily_records.attendance` يقبل `late`؛ 0009 أدناه)**
+
+**مطبَّقة (هجرة 0009، على الإنتاج منذ 2026-09-25):** إعادة بناء `circle_teachers` بلا `UNIQUE(teacher_id)` (آمنة: لا مفتاح أجنبي يشير إليه) مع فهرس `idx_circle_teachers_teacher`. **أي استعلام يصل معلّماً بحلقته عبر `LEFT JOIN circle_teachers` سيكرّر المعلّم بعدد حلقاته** — اجمعها بـ `group_concat` كما في `routes/staff.ts` و`/api/stats/teachers`.
 
 **مخطَّط لاحقاً:** حالة الجلسة + توسيع الحضور، `circle_types`، ملاحظات لولي الأمر، اختبار بنطاق حرّ، متابعة القاعدة النورانية، شاشة «طلاب يحتاجون متابعة». الترتيب في `progress.md`.
 

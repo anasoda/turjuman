@@ -231,23 +231,27 @@ studentRoutes.post("/import", requireAuth("admin", "secretary", "teacher", "stag
   const gPhones = [...new Set(b.rows.map((r) => `${r.guardianWaCc || "970"}|${r.guardianWaNational}`).filter((p) => p.split("|")[1]))];
   const byNid = new Map<string, string>();
   const byPhone = new Map<string, string>();
-  if (gNids.length) {
-    const { results } = await c.env.DB.prepare(`SELECT id, national_id AS nid FROM guardians WHERE center_id = ? AND national_id IN (${gNids.map(() => "?").join(",")})`)
-      .bind(auth.centerId, ...gNids).all<{ id: string; nid: string }>();
+  // D1 يقبل 100 معامل ربط كحد أقصى: 50 صفاً × زوج (رمز + رقم) كانت تتجاوزه، فنقسّم كل بحث إلى دفعات
+  for (let i = 0; i < gNids.length; i += 40) {
+    const part = gNids.slice(i, i + 40);
+    const { results } = await c.env.DB.prepare(`SELECT id, national_id AS nid FROM guardians WHERE center_id = ? AND national_id IN (${part.map(() => "?").join(",")})`)
+      .bind(auth.centerId, ...part).all<{ id: string; nid: string }>();
     results.forEach((r) => byNid.set(r.nid, r.id));
   }
-  if (gPhones.length) {
-    const pairs = gPhones.map((p) => p.split("|"));
+  const pairs = gPhones.map((p) => p.split("|"));
+  for (let i = 0; i < pairs.length; i += 40) {
+    const part = pairs.slice(i, i + 40);
     const { results } = await c.env.DB.prepare(
-      `SELECT id, wa_cc AS cc, wa_national AS n FROM guardians WHERE center_id = ? AND (${pairs.map(() => "(wa_cc = ? AND wa_national = ?)").join(" OR ")})`
-    ).bind(auth.centerId, ...pairs.flat()).all<{ id: string; cc: string; n: string }>();
+      `SELECT id, wa_cc AS cc, wa_national AS n FROM guardians WHERE center_id = ? AND (${part.map(() => "(wa_cc = ? AND wa_national = ?)").join(" OR ")})`
+    ).bind(auth.centerId, ...part.flat()).all<{ id: string; cc: string; n: string }>();
     results.forEach((r) => byPhone.set(`${r.cc}|${r.n}`, r.id));
   }
   // أرقام هوية لها حسابات مسبقاً (اسم المستخدم = رقم الهوية §15.8)
   const takenUsers = new Set<string>();
-  if (gNids.length) {
-    const { results } = await c.env.DB.prepare(`SELECT username FROM users WHERE center_id = ? AND username IN (${gNids.map(() => "?").join(",")})`)
-      .bind(auth.centerId, ...gNids).all<{ username: string }>();
+  for (let i = 0; i < gNids.length; i += 40) {
+    const part = gNids.slice(i, i + 40);
+    const { results } = await c.env.DB.prepare(`SELECT username FROM users WHERE center_id = ? AND username IN (${part.map(() => "?").join(",")})`)
+      .bind(auth.centerId, ...part).all<{ username: string }>();
     results.forEach((r) => takenUsers.add(r.username));
   }
 
@@ -273,15 +277,18 @@ studentRoutes.post("/import", requireAuth("admin", "secretary", "teacher", "stag
     }
     if (existing.has(nid) || seen.has(nid)) { push("duplicate", "رقم الهوية مسجّل مسبقاً"); continue; }
     if (circle && room <= 0) { push("error", "الحلقة مكتملة العدد"); continue; }
-    if (r.birth && !DATE_ONLY.test(r.birth)) { push("error", "تاريخ الميلاد غير صالح (المطلوب YYYY-MM-DD)"); continue; }
+    // الشروط نفسها كنموذج «إضافة طالب» (studentFields/guardianFields): الاستيراد لا يقبل ما يرفضه النموذج
+    if (r.name.length < 8) { push("error", "الاسم الرباعي 8 أحرف على الأقل"); continue; }
+    if (!DATE_ONLY.test(r.birth)) { push("error", "تاريخ الميلاد مطلوب (المطلوب YYYY-MM-DD)"); continue; }
+    if (!r.gender && !circle) { push("error", "الجنس مطلوب عند التسجيل بلا حلقة"); continue; }
     if (r.joinedAt && !DATE_ONLY.test(r.joinedAt)) { push("error", "تاريخ الانتساب غير صالح (المطلوب YYYY-MM-DD)"); continue; }
 
     // ولي الأمر إجباري (§15.7): يُطابَق بالهوية ثم برقم الواتساب فيُكتشف الإخوة تلقائياً (§15.8)
     const gCc = r.guardianWaCc || "970";
     const gWa = r.guardianWaNational;
     const phoneKey = gWa ? `${gCc}|${gWa}` : "";
-    if (!r.guardianName || (!r.guardianNationalId && !gWa)) {
-      push("error", "بيانات ولي الأمر ناقصة (الاسم + رقم الهوية أو رقم الواتساب)"); continue;
+    if (r.guardianName.length < 3 || r.guardianCallPhone.length < 7 || gWa.length < 7) {
+      push("error", "بيانات ولي الأمر ناقصة (الاسم + رقم الاتصال + رقم الواتساب، 7 خانات على الأقل)"); continue;
     }
     let guardianId = (r.guardianNationalId && byNid.get(r.guardianNationalId)) || (phoneKey && byPhone.get(phoneKey)) || "";
     if (guardianId) {
@@ -323,7 +330,7 @@ studentRoutes.post("/import", requireAuth("admin", "secretary", "teacher", "stag
         `INSERT INTO students (id, center_id, user_id, national_id, name, birth, gender, circle_id, direction, memorized_parts, last_surah, last_ayah,
                                ajkam_course, monthly_plan_pages, phone_cc, phone_national, guardian_id, joined_at, created_at, updated_at)
          VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(newId(), auth.centerId, nid, r.name, r.birth, r.gender ?? circle?.category ?? "male", b.circleId, r.direction, partsOf(pos), lastSurah, r.lastAyah,
+      ).bind(newId(), auth.centerId, nid, r.name, r.birth, r.gender ?? circle!.category, b.circleId, r.direction, partsOf(pos), lastSurah, r.lastAyah,
         (AJKAM_COURSES as readonly string[]).includes(r.ajkamCourse) ? r.ajkamCourse : "", r.monthlyPlanPages,
         r.phoneCc || "970", r.phoneNational, guardianId,
         r.joinedAt || today, now, now)

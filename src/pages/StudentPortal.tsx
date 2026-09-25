@@ -55,7 +55,8 @@ export function StudentPortal({ studentId }: { studentId?: string } = {}) {
         {tab === "daily" && data.daily.map((d) => (
           <div key={d.date} className="card">
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><b>{fmtDay(d.date)}</b><span className={`chip ${d.attendance === "absent" ? "off" : ""}`}>{ATTENDANCE_LABELS[d.attendance]}</span></div>
-            {d.attendance !== "absent" && <div className="muted" style={{ fontSize: ".9rem" }}>{pos(d.fromSurah, d.fromAyah)} ← {pos(d.toSurah, d.toAyah)} · {d.pages} صفحة{d.grade ? ` · ${d.grade}` : ""}</div>}
+            {d.fromSurah && <div className="muted" style={{ fontSize: ".9rem" }}>{pos(d.fromSurah, d.fromAyah)} ← {pos(d.toSurah, d.toAyah)} · {d.pages} صفحة{d.grade ? ` · ${d.grade}` : ""}</div>}
+            {(d.attendance === "excused" || d.attendance === "late") && d.note && <div className="muted" style={{ fontSize: ".85rem" }}>{d.note}</div>}
             {d.note && <div style={{ fontSize: ".9rem" }}>ملاحظة المحفّظ: {d.note}</div>}
           </div>
         ))}

@@ -10,7 +10,7 @@ import { useMe } from "../lib/session";
 import type { Circle } from "../lib/types";
 
 interface Row {
-  studentId: string; name: string; direction: Direction; planPages: number; present: number; absent: number; excused: number;
+  studentId: string; name: string; direction: Direction; planPages: number; present: number; late: number; absent: number; excused: number;
   verses: number; pages: number; start: Position | null; end: Position | null; juz: number; percent: number; saved: boolean;
 }
 interface Report { month: string; circleId: string | null; circleName: string | null; locked: boolean; message: string; openDay: number; rows: Row[] }
@@ -74,7 +74,7 @@ export function Reports() {
               <div className="muted" style={{ fontSize: ".9rem" }}>
                 {r.start ? `${fmtPosPage(r.start)} ← ${fmtPosPage(v.end)}` : "لا تسميع مسجَّل هذا الشهر"}
               </div>
-              <div className="muted" style={{ fontSize: ".85rem" }}>حضور {r.present} · غياب {r.absent} · بعذر {r.excused} · {r.verses} آية</div>
+              <div className="muted" style={{ fontSize: ".85rem" }}>حضور {r.present} · تأخر {r.late} · غياب {r.absent} · بعذر {r.excused} · {r.verses} آية</div>
               <div style={{ marginTop: 6 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".88rem" }}><span>{v.pages} من {r.planPages} صفحة</span><b>{v.percent}%</b></div>
                 <div style={{ height: 8, borderRadius: 4, background: "var(--line)", overflow: "hidden" }}><div style={{ height: "100%", width: `${Math.min(100, v.percent)}%`, background: v.percent >= 100 ? "var(--ok)" : "var(--green-2)" }} /></div>

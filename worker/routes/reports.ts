@@ -15,7 +15,7 @@ export const portalRoutes = new Hono<AppEnv>();
 
 interface StudentRow { id: string; name: string; direction: Direction; lastSurah: number; lastAyah: number; monthlyPlanPages: number }
 interface DailyRow { student_id: string; date: string; attendance: string; from_surah: number | null; from_ayah: number | null; to_surah: number | null; to_ayah: number | null; verses: number }
-interface SavedRow { student_id: string; start_surah: number; start_ayah: number; end_surah: number; end_ayah: number; pages: number }
+interface SavedRow { student_id: string; start_surah: number; start_ayah: number; end_surah: number; end_ayah: number; pages: number; plan_pages: number }
 
 export interface ReportRow {
   studentId: string;
@@ -23,6 +23,7 @@ export interface ReportRow {
   direction: Direction;
   planPages: number;
   present: number;
+  late: number;
   absent: number;
   excused: number;
   verses: number;
@@ -50,7 +51,7 @@ export async function buildReportRows(db: D1Database, centerId: string, month: s
       WHERE center_id = ? AND date LIKE ? AND student_id IN (${marks}) ORDER BY date`
   ).bind(centerId, `${month}-%`, ...ids).all<DailyRow>();
   const { results: saved } = await db.prepare(
-    `SELECT student_id, start_surah, start_ayah, end_surah, end_ayah, pages FROM monthly_reports WHERE center_id = ? AND month = ? AND student_id IN (${marks})`
+    `SELECT student_id, start_surah, start_ayah, end_surah, end_ayah, pages, plan_pages FROM monthly_reports WHERE center_id = ? AND month = ? AND student_id IN (${marks})`
   ).bind(centerId, month, ...ids).all<SavedRow>();
   const savedBy = new Map(saved.map((r) => [r.student_id, r]));
 
@@ -61,21 +62,25 @@ export async function buildReportRows(db: D1Database, centerId: string, month: s
     let start: Position | null = ranges[0]?.from ?? null;
     let end: Position | null = ranges.length ? ranges[ranges.length - 1].to : null;
     let pages = countUniquePages(s.direction, ranges);
+    // خطة الطالب اليوم قد تختلف عمّا كانت عليه وقت حفظ الكشف: الكشف المحفوظ يبقى بخطته المحفوظة
+    let planPages = s.monthlyPlanPages;
     const sv = savedBy.get(s.id);
     if (sv) {
+      planPages = sv.plan_pages;
       start = { surah: sv.start_surah, ayah: sv.start_ayah };
       end = { surah: sv.end_surah, ayah: sv.end_ayah };
       pages = sv.pages;
     }
     return {
-      studentId: s.id, name: s.name, direction: s.direction, planPages: s.monthlyPlanPages,
+      studentId: s.id, name: s.name, direction: s.direction, planPages,
       present: mine.filter((d) => d.attendance === "present").length,
+      late: mine.filter((d) => d.attendance === "late").length,
       absent: mine.filter((d) => d.attendance === "absent").length,
       excused: mine.filter((d) => d.attendance === "excused").length,
       verses: done.reduce((n, d) => n + d.verses, 0),
       pages, start, end,
       juz: completedJuz(s.direction, end ?? { surah: s.lastSurah, ayah: s.lastAyah }),
-      percent: planPercent(pages, s.monthlyPlanPages),
+      percent: planPercent(pages, planPages),
       saved: !!sv
     };
   });
@@ -145,7 +150,7 @@ reportRoutes.post("/save", requireAuth("admin", "secretary", "teacher", "stage_m
          ON CONFLICT(student_id, month) DO UPDATE SET direction = excluded.direction, start_surah = excluded.start_surah, start_ayah = excluded.start_ayah,
            end_surah = excluded.end_surah, end_ayah = excluded.end_ayah, pages = excluded.pages, plan_pages = excluded.plan_pages,
            saved_by = excluded.saved_by, saved_at = excluded.saved_at`
-      ).bind(newId(), auth.centerId, student.id, b.month, student.direction, start.surah, start.ayah, row.end.surah, row.end.ayah, pages, student.monthlyPlanPages, auth.userId, now)
+      ).bind(newId(), auth.centerId, student.id, b.month, student.direction, start.surah, start.ayah, row.end.surah, row.end.ayah, pages, built.planPages, auth.userId, now)
     );
   }
   if (!stmts.length) fail(400, "لا توجد صفوف صالحة للحفظ");

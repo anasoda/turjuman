@@ -225,6 +225,13 @@ await test("تعديل بيانات ولي الأمر ورقماه المنفص�
 });
 
 await test("تعديل أبناء ولي الأمر وإيقاف حسابه", async () => {
+  // إزالة أبناء دون نقلهم مرفوضة (لا طالب بلا ولي)، والنقل يتم بإضافتهم إلى ولي آخر
+  const bare = await call(`/api/guardians/${importGuardianId}/children`, { method: "PUT", cookie: admin, body: { studentIds: [importedIds[0]] } });
+  assert.equal(bare.status, 400, JSON.stringify(bare.data));
+  const others = (await call("/api/guardians", { cookie: admin })).data.guardians.filter((g) => g.id !== importGuardianId);
+  const target = others[0];
+  const moved = await call(`/api/guardians/${target.id}/children`, { method: "PUT", cookie: admin, body: { studentIds: [...target.children.map((k) => k.id), ...importedIds.slice(1)] } });
+  assert.equal(moved.status, 200, JSON.stringify(moved.data));
   const put = await call(`/api/guardians/${importGuardianId}/children`, { method: "PUT", cookie: admin, body: { studentIds: [importedIds[0]] } });
   assert.equal(put.status, 200, JSON.stringify(put.data));
   const wali = await session(G, guardianNid, guardianNid);

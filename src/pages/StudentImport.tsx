@@ -17,6 +17,8 @@ export function StudentImport({ circles, onClose, onDone }: { circles: Circle[];
   const { user } = useMe();
   const { toast } = useUi();
   const usable = circles.filter((c) => c.active);
+  // بلا حلقة: للإداريين فقط (الطالب بلا حلقة خارج نطاق المعلّم ومدير المرحلة)
+  const canUnassigned = user.role === "admin" || user.role === "secretary";
   const [circleId, setCircleId] = useState(usable[0]?.id ?? "");
   const [createAccounts, setCreateAccounts] = useState(false);
   const [fileName, setFileName] = useState("");
@@ -126,7 +128,7 @@ export function StudentImport({ circles, onClose, onDone }: { circles: Circle[];
 
         <Field label="الحلقة" hint={circle ? `فئة الحلقة: ${circle.category === "male" ? "ذكور" : "إناث"} — الحالي ${circle.studentCount}` : undefined}>
           <select value={circleId} onChange={(e) => setCircleId(e.target.value)} disabled={user.role === "teacher" && usable.length === 1}>
-            {user.role !== "teacher" && <option value="">بلا حلقة بعد (يُوزَّعون لاحقاً)</option>}
+            {canUnassigned && <option value="">بلا حلقة بعد (يُوزَّعون لاحقاً)</option>}
             {usable.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </Field>
@@ -186,7 +188,7 @@ export function StudentImport({ circles, onClose, onDone }: { circles: Circle[];
               {built.length > 10 && <small className="muted">…و{built.length - 10} سطراً آخر</small>}
             </div>
 
-            <button className="btn" type="button" disabled={busy || !ready.length || !circleId} onClick={() => void run()}>
+            <button className="btn" type="button" disabled={busy || !ready.length || (!circleId && !canUnassigned)} onClick={() => void run()}>
               {busy ? "جارٍ الاستيراد…" : `استيراد ${ready.length} طالباً`}
             </button>
           </>

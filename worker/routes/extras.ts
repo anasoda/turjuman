@@ -266,8 +266,8 @@ statsRoutes.get("/overview", requireAuth("admin", "secretary", "stage_manager", 
   }
   const first = `${list[0]}-01`;
   const { results: daily } = await c.env.DB.prepare(
-    `SELECT substr(date, 1, 7) AS month, SUM(CASE WHEN attendance = 'present' THEN 1 ELSE 0 END) AS present, SUM(CASE WHEN attendance = 'absent' THEN 1 ELSE 0 END) AS absent,
-            SUM(CASE WHEN attendance = 'excused' THEN 1 ELSE 0 END) AS excused, SUM(CASE WHEN attendance <> 'absent' THEN pages ELSE 0 END) AS pages
+    `SELECT substr(date, 1, 7) AS month, SUM(CASE WHEN attendance IN ('present', 'late') THEN 1 ELSE 0 END) AS present, SUM(CASE WHEN attendance = 'absent' THEN 1 ELSE 0 END) AS absent,
+            SUM(CASE WHEN attendance = 'excused' THEN 1 ELSE 0 END) AS excused, SUM(pages) AS pages
        FROM daily_records WHERE center_id = ? AND date >= ?${only} GROUP BY substr(date, 1, 7)`
   ).bind(auth.centerId, first, ...onlyBinds).all<{ month: string; present: number; absent: number; excused: number; pages: number }>();
   const { results: sard } = await c.env.DB.prepare(`SELECT substr(date, 1, 7) AS month, COUNT(*) AS n FROM sard_records WHERE center_id = ? AND date >= ?${only} GROUP BY substr(date, 1, 7)`).bind(auth.centerId, first, ...onlyBinds).all<{ month: string; n: number }>();
@@ -287,9 +287,9 @@ statsRoutes.get("/students", requireAuth("admin", "secretary", "stage_manager", 
   const { results } = await c.env.DB.prepare(
     `SELECT s.id, s.name, s.national_id AS nationalId, s.birth, s.gender, s.direction, s.last_surah AS lastSurah, s.last_ayah AS lastAyah, s.monthly_plan_pages AS monthlyPlanPages,
             ci.id AS circleId, ci.name AS circleName, ci.level_key AS levelKey,
-            (SELECT COUNT(*) FROM daily_records d WHERE d.student_id = s.id AND d.attendance = 'present') AS present,
+            (SELECT COUNT(*) FROM daily_records d WHERE d.student_id = s.id AND d.attendance IN ('present', 'late')) AS present,
             (SELECT COUNT(*) FROM daily_records d WHERE d.student_id = s.id AND d.attendance = 'absent') AS absent,
-            (SELECT COALESCE(SUM(pages), 0) FROM daily_records d WHERE d.student_id = s.id AND d.attendance <> 'absent') AS pages,
+            (SELECT COALESCE(SUM(pages), 0) FROM daily_records d WHERE d.student_id = s.id) AS pages,
             (SELECT COUNT(*) FROM tests t WHERE t.student_id = s.id AND t.status = 'completed') AS tests
        FROM students s LEFT JOIN circles ci ON ci.id = s.circle_id WHERE s.center_id = ? AND s.archived_at IS NULL${scope.sql} ORDER BY s.name`
   ).bind(auth.centerId, ...scope.binds).all<{ direction: string; lastSurah: number; lastAyah: number }>();

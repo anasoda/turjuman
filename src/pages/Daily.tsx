@@ -58,13 +58,13 @@ export function Daily() {
               <b>{student.name}</b>
               {record ? (
                 <small>
-                  {record.attendance === "absent" ? "غائب" : `${fmtPos(record.fromSurah ? { surah: record.fromSurah, ayah: record.fromAyah! } : null)} ← ${fmtPos(record.toSurah ? { surah: record.toSurah, ayah: record.toAyah! } : null)} · ${record.pages} ص`}
+                  {record.attendance === "absent" || record.attendance === "excused" ? (record.attendance === "absent" ? "غائب" : `بعذر: ${record.note}`) : `${fmtPos(record.fromSurah ? { surah: record.fromSurah, ayah: record.fromAyah! } : null)} ← ${fmtPos(record.toSurah ? { surah: record.toSurah, ayah: record.toAyah! } : null)} · ${record.pages} ص`}
                   {record.grade ? ` · ${record.grade}` : ""}
                 </small>
               ) : <small>{student.nextStart ? `يبدأ من ${fmtPos(student.nextStart)}` : "أتمّ المسار"}</small>}
               {absenceNotice && <small style={{ color: "var(--gold)" }}>أبلغ ولي الأمر عن غيابه: {absenceNotice}</small>}
             </span>
-            <span className={`chip ${record ? (record.attendance === "absent" ? "off" : "") : "gold"}`}>{record ? ATTENDANCE_LABELS[record.attendance] : "لم يُسجَّل"}</span>
+            <span className={`chip ${record ? (record.attendance === "absent" ? "off" : record.attendance === "present" ? "" : "gold") : "gold"}`}>{record ? ATTENDANCE_LABELS[record.attendance] : "لم يُسجَّل"}</span>
           </button>
         ))}
         {!board.loading && !rows.length && <div className="empty">{noCircle ? (isTeacher ? "لم تُسنَد إليك حلقة بعد." : "لا توجد حلقات فعّالة.") : "لا يوجد طلاب في هذه الحلقة."}</div>}
@@ -87,7 +87,9 @@ function DailyForm({ date, student, record, onClose, onSaved }: { date: string; 
   const [grade, setGrade] = useState(record?.grade ?? "");
   const [note, setNote] = useState(record?.note ?? "");
 
-  const attends = attendance !== "absent";
+  const attends = attendance === "present" || attendance === "late";
+  const needsNote = attendance === "excused" || attendance === "late";
+  const noteOk = !needsNote || note.trim().length >= 2;
   const valid = !attends || isValidRange(dir, from, to);
   const calc = useMemo(() => (attends && valid ? { verses: countVerses(dir, from, to), pages: countPages(dir, from, to) } : null), [attends, valid, dir, from, to]);
 
@@ -128,9 +130,11 @@ function DailyForm({ date, student, record, onClose, onSaved }: { date: string; 
             </Field>
           </>
         )}
-        <Field label="ملاحظة لولي الأمر (اختياري)"><textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} /></Field>
+        <Field label={attendance === "excused" ? "سبب العذر (إجباري)" : attendance === "late" ? "سبب التأخر (إجباري)" : "ملاحظة لولي الأمر (اختياري)"}>
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} />
+        </Field>
         <div className="actions">
-          <button className="btn" disabled={busy || !valid}>{record ? "حفظ التعديل" : "حفظ"}</button>
+          <button className="btn" disabled={busy || !valid || !noteOk}>{record ? "حفظ التعديل" : "حفظ"}</button>
           {record && <button className="btn ghost danger" type="button" onClick={() => void remove()}>حذف السجل</button>}
         </div>
       </form>

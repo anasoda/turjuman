@@ -258,9 +258,12 @@ guardianRoutes.put("/:id/children", requireAuth(...MANAGERS), async (c) => {
   const g = await loadGuardian(c, c.req.param("id"));
   const { studentIds } = await parseBody(c, childrenSchema);
   const clean = await checkStudents(c.env.DB, auth.centerId, studentIds);
+  // بيانات ولي الأمر إجبارية لكل طالب (§14.1): لا يُترك طالب بلا ولي. النقل يتم بإضافته إلى ولي آخر.
+  const { results: current } = await c.env.DB.prepare("SELECT id, name FROM students WHERE guardian_id = ? AND center_id = ?").bind(g.id, auth.centerId).all<{ id: string; name: string }>();
+  const orphaned = current.filter((s) => !clean.includes(s.id));
+  if (orphaned.length) fail(400, `لا يمكن إزالة ${orphaned.map((s) => s.name).slice(0, 3).join("، ")} من هذا الولي دون نقله إلى ولي أمر آخر`);
   const now = Date.now();
   await c.env.DB.batch([
-    c.env.DB.prepare("UPDATE students SET guardian_id = NULL, updated_at = ? WHERE guardian_id = ? AND center_id = ?").bind(now, g.id, auth.centerId),
     ...clean.map((id) => c.env.DB.prepare("UPDATE students SET guardian_id = ?, updated_at = ? WHERE id = ? AND center_id = ?").bind(g.id, now, id, auth.centerId))
   ]);
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "update", entity: "guardian_children", entityId: g.id, details: `${clean.length}` });

@@ -317,9 +317,13 @@ export function buildImportRows(
       ajkamCourse: (AJKAM_COURSES as readonly string[]).includes(course) ? course : "",
       joinedAt: toIsoDate(get("joinedAt"))
     };
-    const problem = name.length < 3 ? "الاسم مفقود أو قصير"
-      : !student.guardianName ? "اسم ولي الأمر مطلوب"
-      : !student.guardianWaNational && !student.guardianNationalId ? "رقم واتساب ولي الأمر أو هويته مطلوب"
+    // إن غاب رقم الاتصال يُعتمد الواتساب (والعكس أعلاه)
+    if (!student.guardianCallPhone) student.guardianCallPhone = student.guardianWaNational;
+    // الشروط نفسها التي يفرضها الخادم (نموذج «إضافة طالب»): الاسم الرباعي، الميلاد، ووليّ الأمر كاملاً
+    const problem = name.length < 8 ? "الاسم مفقود أو أقل من 8 أحرف (الاسم الرباعي)"
+      : !/^\d{4}-\d{2}-\d{2}$/.test(student.birth) ? "تاريخ الميلاد مفقود أو غير صالح"
+      : student.guardianName.length < 3 ? "اسم ولي الأمر مطلوب"
+      : student.guardianWaNational.length < 7 ? "رقم واتساب ولي الأمر (أو اتصاله) مطلوب، 7 خانات على الأقل"
       : "";
     out.push({ line: i + offset, student, problem });
   });
