@@ -1,0 +1,26 @@
+{
+	// Worker واحد: يخدم الواجهة المبنية (dist) وواجهة /api/*.
+	// الأسرار تُضبط بالأمر (لا تُكتب هنا):
+	//   npx wrangler secret put JWT_SECRET
+	//   npx wrangler secret put ADMIN_BOOTSTRAP_KEY
+	"name": "turjuman-v2",
+	"main": "worker/index.ts",
+	"compatibility_date": "2026-05-15",
+	"observability": { "enabled": true },
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS",
+		"run_worker_first": ["/api/*"],
+		"not_found_handling": "single-page-application"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "turjuman-v2-db",
+			// للتطوير المحلي فقط؛ استبدله بمعرّف القاعدة الحقيقي عند النشر:
+			//   npx wrangler d1 create turjuman-v2-db
+			"database_id": "d0bbbb7c-780f-4093-9bd5-06b8446c64f7",
+			"migrations_dir": "migrations"
+		}
+	]
+}

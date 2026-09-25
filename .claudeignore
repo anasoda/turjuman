@@ -1,0 +1,33 @@
+# ملفات ومجلدات يجب على Claude تجاهلها عند البحث والقراءة (ضخمة أو مُولَّدة أو سرّية)
+node_modules/
+dist/
+build/
+coverage/
+.wrangler/
+.vite/
+.cache/
+.token-optimizer/
+*.log
+*.tsbuildinfo
+package-lock.json
+
+# أسرار — لا تُقرأ ولا تُنسخ
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+*.pem
+*.key
+
+# قواعد بيانات محلية وملفات ثنائية
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.ico
+*.woff
+*.woff2
