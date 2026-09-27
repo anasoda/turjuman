@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 .wrangler/
+.test-*/
 .vite/
 .token-optimizer/
 *.log
@@ -11,3 +12,4 @@ coverage/
 .dev.vars
 .dev.vars.*
 .DS_Store
+.claude/skills/*/scripts/__pycache__/
