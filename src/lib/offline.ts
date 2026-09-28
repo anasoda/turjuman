@@ -1,6 +1,6 @@
 // العمل دون إنترنت:
 //  - قراءات GET تُخزَّن آخر نسخة ناجحة في IndexedDB وتُخدَم منها عند انقطاع الشبكة.
-//  - الكتابات الميدانية (التسميع اليومي، السرد، الاختبار التجريبي) تُحفظ في «صندوق الصادر» وتُرسل تلقائياً عند عودة الاتصال.
+//  - كتابات العمل اليومي والكشف الشهري تُحفظ في «صندوق الصادر» وتُرسل تلقائياً عند عودة الاتصال.
 //  - قاعدة التعارض: آخر حفظ يغلب. التسميع اليومي upsert بحسب (الطالب، اليوم)، والسرد/الاختبار يحملان معرّفاً من الجهاز فلا يتكرران عند إعادة الإرسال.
 //  - عند تسجيل الخروج تُمسح النسخ المخزَّنة؛ أما الصندوق فيبقى لكن لا يُرسل إلا لصاحبه.
 
@@ -11,15 +11,18 @@ const OUTBOX = "outbox";
 export interface OutboxItem {
   id?: number;
   userId: string;
-  method: "POST";
+  method: "POST" | "PUT";
   path: string;
   body: unknown;
   createdAt: number;
+  status?: "rejected";
+  error?: string;
 }
 
 export interface SyncState {
   online: boolean;
   pending: number;
+  rejected: number;
   syncing: boolean;
   /** آخر رسائل تعذّر إرسالها (رُفضت من الخادم) — تُعرض ثم تُمسح */
   failures: string[];
@@ -63,14 +66,17 @@ export async function cacheGet<T>(key: string): Promise<T | undefined> {
   }
 }
 export const cacheClear = () => tx(CACHE, "readwrite", (s) => s.clear()).catch(() => undefined);
+export const cacheDelete = (key: string) => tx(CACHE, "readwrite", (s) => s.delete(key)).catch(() => undefined);
+export const cacheKeys = (): Promise<string[]> => tx<IDBValidKey[]>(CACHE, "readonly", (s) => s.getAllKeys()).then((keys) => keys.map(String)).catch(() => []);
 
 /* ---------------- صندوق الصادر ---------------- */
 export const outboxAdd = (item: Omit<OutboxItem, "id">) => tx(OUTBOX, "readwrite", (s) => s.add(item));
 export const outboxAll = (): Promise<OutboxItem[]> => tx<OutboxItem[]>(OUTBOX, "readonly", (s) => s.getAll()).catch(() => []);
 export const outboxDelete = (id: number) => tx(OUTBOX, "readwrite", (s) => s.delete(id));
+export const outboxPut = (item: OutboxItem) => tx(OUTBOX, "readwrite", (s) => s.put(item));
 
 /* ---------------- حالة المزامنة (مشتركة مع الواجهة) ---------------- */
-let state: SyncState = { online: typeof navigator === "undefined" ? true : navigator.onLine, pending: 0, syncing: false, failures: [], servedFromCache: false };
+let state: SyncState = { online: typeof navigator === "undefined" ? true : navigator.onLine, pending: 0, rejected: 0, syncing: false, failures: [], servedFromCache: false };
 const listeners = new Set<(s: SyncState) => void>();
 export const getSyncState = (): SyncState => state;
 export function setSyncState(patch: Partial<SyncState>) {
@@ -84,28 +90,44 @@ export function subscribeSync(fn: (s: SyncState) => void): () => void {
 export const clearFailures = () => setSyncState({ failures: [] });
 
 export async function refreshPending(userId?: string) {
-  const all = await outboxAll();
-  setSyncState({ pending: userId ? all.filter((i) => i.userId === userId).length : all.length });
+  const all = (await outboxAll()).filter((i) => !userId || i.userId === userId);
+  setSyncState({ pending: all.filter((i) => i.status !== "rejected").length, rejected: all.filter((i) => i.status === "rejected").length });
+}
+
+export async function retryRejected(id: number, userId: string) {
+  const item = (await outboxAll()).find((i) => i.id === id && i.userId === userId && i.status === "rejected");
+  if (!item) return;
+  await outboxPut({ ...item, status: undefined, error: undefined });
+  await refreshPending(userId);
+}
+
+export async function discardRejected(id: number, userId: string) {
+  const item = (await outboxAll()).find((i) => i.id === id && i.userId === userId && i.status === "rejected");
+  if (!item) return;
+  await outboxDelete(id);
+  await refreshPending(userId);
 }
 
 /** المسارات التي تُحفظ في الصندوق عند انقطاع الشبكة. */
-export const QUEUEABLE = [/^\/api\/daily$/, /^\/api\/sard$/, /^\/api\/tests\/trial$/];
-export const isQueueable = (method: string, path: string): boolean => method === "POST" && QUEUEABLE.some((re) => re.test(path));
+export const QUEUEABLE_POST = [/^\/api\/daily$/, /^\/api\/sard$/, /^\/api\/tests\/trial$/, /^\/api\/tests\/propose$/, /^\/api\/tests\/[^/]+\/(approve|reject|session)$/, /^\/api\/staff-attendance$/, /^\/api\/reports\/save$/];
+export const isQueueable = (method: string, path: string): boolean =>
+  (method === "POST" && QUEUEABLE_POST.some((re) => re.test(path))) || (method === "PUT" && /^\/api\/tests\/[^/]+\/session$/.test(path));
 
-export async function enqueue(userId: string, path: string, body: unknown) {
-  await outboxAdd({ userId, method: "POST", path, body, createdAt: Date.now() });
+export async function enqueue(userId: string, path: string, body: unknown, method: "POST" | "PUT" = "POST") {
+  await outboxAdd({ userId, method, path, body, createdAt: Date.now() });
   await refreshPending(userId);
 }
 
 let flushing = false;
-/** يرسل صندوق المستخدم الحالي بالترتيب. يتوقف عند انقطاع الشبكة أو انتهاء الجلسة، ويحذف ما يرفضه الخادم (400/403/404/409) مع إبلاغ. */
+/** يرسل صندوق المستخدم الحالي بالترتيب. السجل المرفوض يبقى للمراجعة وتُوقف السلسلة كي لا يُرسل كشف يعتمد عليه. */
 export async function flushOutbox(userId: string, send: (item: OutboxItem) => Promise<{ status: number; error?: string }>): Promise<void> {
   if (flushing) return;
   flushing = true;
   setSyncState({ syncing: true });
   try {
-    const items = (await outboxAll()).filter((i) => i.userId === userId).sort((a, b) => a.createdAt - b.createdAt);
+    const items = (await outboxAll()).filter((i) => i.userId === userId).sort((a, b) => a.createdAt - b.createdAt || (a.id ?? 0) - (b.id ?? 0));
     for (const item of items) {
+      if (item.status === "rejected") break;
       let res: { status: number; error?: string };
       try {
         res = await send(item);
@@ -115,8 +137,13 @@ export async function flushOutbox(userId: string, send: (item: OutboxItem) => Pr
       }
       if (res.status === 401) break; // الجلسة انتهت؛ يبقى الصندوق حتى يعود المستخدم
       if (res.status >= 500) break; // عطل مؤقت في الخادم
+      if (res.status >= 400) {
+        const error = res.error || "رفض الخادم أحد السجلات المحفوظة";
+        await outboxPut({ ...item, status: "rejected", error });
+        setSyncState({ failures: [...state.failures, error] });
+        break;
+      }
       await outboxDelete(item.id!);
-      if (res.status >= 400) setSyncState({ failures: [...state.failures, res.error || "رفض الخادم أحد السجلات المحفوظة"] });
     }
   } finally {
     flushing = false;

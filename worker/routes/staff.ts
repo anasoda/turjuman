@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { AJKAM_COURSES, MIN_PASSWORD, NATIONAL_ID_RE, PHONE_RE, QUALIFICATIONS, STAFF_ROLES, STORED_ROLE, USERNAME_RE, type Role } from "../../shared/constants";
+import { AJKAM_COURSES, MIN_PASSWORD, NATIONAL_ID_RE, PHONE_RE, QUALIFICATIONS, STAFF_ROLES, STORED_ROLE, USERNAME_RE, WA_PREFIXES, type Role } from "../../shared/constants";
 import type { AppEnv } from "../env";
 import { requireAuth } from "../lib/auth";
 import { createPasswordRecord, newId } from "../lib/crypto";
@@ -24,6 +24,17 @@ async function checkStages(c: import("hono").Context<AppEnv>, stages: string[]) 
   if (bad.length) fail(400, "مرحلة غير معروفة في إعدادات المركز");
 }
 
+async function checkTeacherStages(c: import("hono").Context<AppEnv>, userId: string, stages: string[]) {
+  if (!stages.length) return;
+  const auth = c.get("auth");
+  const marks = stages.map(() => "?").join(",");
+  const row = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM circle_teachers ct JOIN circles ci ON ci.id = ct.circle_id
+      WHERE ct.teacher_id = ? AND ci.center_id = ? AND ci.level_key IN (${marks})`
+  ).bind(userId, auth.centerId, ...stages).first<{ n: number }>();
+  if (!row?.n) fail(400, "يجب أن يكون المعلّم مسنداً إلى حلقة في المرحلة المختارة");
+}
+
 /** يستبدل مراحل مدير المرحلة بالقائمة المعطاة (حذف ثم إدراج داخل batch واحد). */
 function stageStatements(db: D1Database, userId: string, centerId: string, stages: string[]): D1PreparedStatement[] {
   return [
@@ -32,21 +43,23 @@ function stageStatements(db: D1Database, userId: string, centerId: string, stage
   ];
 }
 
-const minAge = (birth: string, years: number) => (Date.now() - new Date(birth).getTime()) / 31_557_600_000 >= years;
 
 const profileFields = {
   nationalId: z.string().regex(NATIONAL_ID_RE, "رقم الهوية 9 أرقام"),
   phone: z.string().regex(PHONE_RE, "رقم الجوال يبدأ بـ 059 أو 056 ويتكوّن من 10 أرقام"),
   /** رقم الواتساب المستقل بمقدمة دولته (§15.2) — فارغ يعني «استعمل رقم الاتصال». */
-  waCc: z.string().trim().max(4).default("970"),
-  waNational: z.string().trim().max(20).default(""),
-  birth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "تاريخ الميلاد غير صالح"),
-  gender: z.enum(["male", "female"]),
+  waCc: z.enum(WA_PREFIXES, { errorMap: () => ({ message: "المقدمة المسموحة 970 أو 972 فقط" }) }).default("970"),
+  waNational: z.string().trim().max(20, "رقم الواتساب طويل جداً").default(""),
+  birth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "تاريخ الميلاد غير صالح").refine((d) => {
+    const age = (Date.now() - new Date(d).getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+    return age >= 18;
+  }, "يجب أن يكون العمر 18 عاماً فما فوق"),
+  gender: z.enum(["male", "female"], { errorMap: () => ({ message: "الجنس مطلوب" }) }),
   email: z.string().email("البريد الإلكتروني غير صالح").or(z.literal("")).default(""),
   address: z.string().max(200).default(""),
-  qualification: z.enum(QUALIFICATIONS),
-  ajkamCourse: z.enum(AJKAM_COURSES),
-  memorizedParts: z.number().int().min(0).max(30)
+  qualification: z.enum(QUALIFICATIONS, { errorMap: () => ({ message: "المؤهل غير صالح" }) }),
+  ajkamCourse: z.enum(AJKAM_COURSES, { errorMap: () => ({ message: "دورة الأحكام غير صالحة" }) }),
+  memorizedParts: z.number({ invalid_type_error: "الأجزاء المحفوظة يجب أن تكون رقماً" }).int().min(0, "الأجزاء المحفوظة لا تقل عن 0").max(30, "الأجزاء المحفوظة لا تزيد عن 30")
 };
 
 const createSchema = z.object({
@@ -82,8 +95,11 @@ const SELECT_STAFF = `
     LEFT JOIN staff_profiles p ON p.user_id = u.id`;
 
 staffRoutes.get("/", requireAuth("admin", "secretary"), async (c) => {
-  const { centerId } = c.get("auth");
-  const { results } = await c.env.DB.prepare(`${SELECT_STAFF} WHERE u.center_id = ? AND u.role IN ('secretary','teacher','exam_committee') ORDER BY u.role, u.display_name`)
+  const { centerId, role } = c.get("auth");
+  const allowedRoles = role === "secretary"
+    ? "AND u.role IN ('teacher','exam_committee') AND NOT EXISTS (SELECT 1 FROM stage_managers sm WHERE sm.user_id = u.id)"
+    : "AND u.role IN ('secretary','teacher','exam_committee')";
+  const { results } = await c.env.DB.prepare(`${SELECT_STAFF} WHERE u.center_id = ? ${allowedRoles} ORDER BY u.role, u.display_name`)
     .bind(centerId)
     .all();
   // الدور الفعلي: مدير المرحلة مخزَّن بدور 'teacher' (§15.3). والحلقات قد تكون أكثر من واحدة (0009).
@@ -110,7 +126,7 @@ staffRoutes.post("/", requireAuth("admin", "secretary"), async (c) => {
   const b = await parseBody(c, createSchema);
   if (!canManage(auth.role, b.role)) fail(403, "لا تملك صلاحية إنشاء هذا النوع من الحسابات");
   if (b.role === "stage_manager") await checkStages(c, b.stages);
-  if (!minAge(b.birth, b.role === "secretary" ? 16 : 18)) fail(400, b.role === "secretary" ? "يجب ألا يقل عمر السكرتير عن 16 عاماً" : "يجب ألا يقل العمر عن 18 عاماً");
+  
   const dupUser = await c.env.DB.prepare("SELECT id FROM users WHERE center_id = ? AND username = ?").bind(auth.centerId, b.username).first();
   if (dupUser) fail(409, "اسم المستخدم مستخدم مسبقاً في هذا المركز");
   const dupNid = await c.env.DB.prepare("SELECT user_id FROM staff_profiles p JOIN users u ON u.id = p.user_id WHERE u.center_id = ? AND p.national_id = ?")
@@ -185,15 +201,55 @@ staffRoutes.patch("/:id", requireAuth("admin", "secretary"), async (c) => {
     );
   }
   if (b.stages !== undefined) {
-    if (target.role !== "stage_manager") fail(400, "المراحل تُسنَد لمديري المراحل فقط");
-    await checkStages(c, b.stages);
-    // تغيير المراحل يغيّر نطاق الجلسة، فتُنهى الجلسات القائمة ليُعاد اشتقاق الدور
+    if (target.role !== "teacher" && target.role !== "stage_manager") fail(400, "يمكن تعيين مدير المرحلة من حساب معلّم فقط");
+    if (b.stages.length) {
+      await checkStages(c, b.stages);
+      await checkTeacherStages(c, target.id, b.stages);
+    }
+    // تغيير المراحل يغيّر نطاق الجلسة، فتُنهى الجلسات القائمة ليُعاد اشتقاق الدور؛ القائمة الفارغة تلغي التعيين.
     stmts.push(...stageStatements(c.env.DB, target.id, auth.centerId, b.stages));
     stmts.push(c.env.DB.prepare("UPDATE users SET session_version = session_version + 1, updated_at = ? WHERE id = ?").bind(now, target.id));
   }
   if (!stmts.length) fail(400, "لا توجد تعديلات");
   await c.env.DB.batch(stmts);
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "update", entity: "staff", entityId: target.id, details: Object.keys(b).join(",") });
+  return c.json({ ok: true });
+});
+
+/**
+ * حذف حساب كادر نهائياً (المدير، والسكرتير للمعلّمين واللجنة).
+ * يُرفض إن كان معيَّناً على حلقة (تُترك بلا معلّم دون قصد) أو كتب ملاحظات/رسائل (`author_id` إلزامي فلا نُنسبها لغيره):
+ * في الحالتين يُعطَّل الحساب بدلاً من حذفه. أما سجلاته (تسميع، سرد، اختبارات، كشوف، سجل التعديلات) فتبقى بلا اسم كاتبها.
+ * حضوره الشخصي وإشعاراته وبياناته الشخصية تُحذف معه.
+ */
+staffRoutes.delete("/:id", requireAuth("admin", "secretary"), async (c) => {
+  const auth = c.get("auth");
+  const target = await loadTarget(c, c.req.param("id"));
+  if (target.id === auth.userId) fail(400, "لا يمكنك حذف حسابك");
+  const count = async (sql: string) => (await c.env.DB.prepare(sql).bind(target.id).first<{ n: number }>())?.n ?? 0;
+  if (await count("SELECT COUNT(*) AS n FROM circle_teachers WHERE teacher_id = ?")) fail(409, "الحساب معيَّن على حلقة. انقله من الحلقة أولاً، أو عطّل الحساب بدل حذفه.");
+  if ((await count("SELECT COUNT(*) AS n FROM student_notes WHERE author_id = ?")) + (await count("SELECT COUNT(*) AS n FROM announcements WHERE author_id = ?"))) {
+    fail(409, "للحساب ملاحظات أو رسائل مكتوبة بأسمه. عطّل الحساب بدل حذفه للحفاظ عليها.");
+  }
+  const id = target.id;
+  const nulls = [
+    "UPDATE daily_records SET recorded_by = NULL WHERE recorded_by = ?",
+    "UPDATE sard_records SET recorded_by = NULL WHERE recorded_by = ?",
+    "UPDATE tests SET proposed_by = NULL WHERE proposed_by = ?",
+    "UPDATE tests SET decided_by = NULL WHERE decided_by = ?",
+    "UPDATE monthly_reports SET saved_by = NULL WHERE saved_by = ?",
+    "UPDATE staff_attendance SET recorded_by = NULL WHERE recorded_by = ?",
+    "UPDATE audit_log SET user_id = NULL WHERE user_id = ?"
+  ];
+  const removes = [
+    "DELETE FROM staff_attendance WHERE user_id = ?",
+    "DELETE FROM notifications WHERE user_id = ?",
+    "DELETE FROM stage_managers WHERE user_id = ?",
+    "DELETE FROM staff_profiles WHERE user_id = ?",
+    "DELETE FROM users WHERE id = ?"
+  ];
+  await c.env.DB.batch([...nulls, ...removes].map((sql) => c.env.DB.prepare(sql).bind(id)));
+  await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "delete", entity: "staff", entityId: id, details: `${target.role}: ${target.display_name}` });
   return c.json({ ok: true });
 });
 

@@ -2,10 +2,10 @@ import { useState } from "react";
 import { DIRECTION_LABELS, type Direction } from "@shared/constants";
 import { Field, Sheet, useUi } from "../components/ui";
 import { api } from "../lib/api";
-import { downloadFile } from "../lib/download";
+import { downloadXlsx } from "../lib/xlsx-write";
 import { useMe } from "../lib/session";
 import type { Circle } from "../lib/types";
-import { buildImportRows, detectMapping, FIELDS, looksLikeHeader, readSheet, templateCsv, type BuiltRow, type FieldKey } from "../lib/sheet";
+import { buildImportRows, detectMapping, FIELDS, looksLikeHeader, readSheet, templateHeaders, type BuiltRow, type FieldKey } from "../lib/sheet";
 
 interface RowResult { index: number; name: string; status: "added" | "duplicate" | "error"; message: string }
 interface ImportResponse { added: number; duplicates: number; errors: number; guardiansCreated: number; guardiansLinked: number; accountsCreated: number; results: RowResult[] }
@@ -53,7 +53,9 @@ export function StudentImport({ circles, onClose, onDone }: { circles: Circle[];
     }
   };
 
-  const built: BuiltRow[] = cells ? buildImportRows(cells, mapping, { header, defaultDirection: direction, defaultPlan: plan }) : [];
+  const built: BuiltRow[] = cells ? buildImportRows(cells, mapping, {
+    header, defaultDirection: direction, defaultPlan: plan, tempIds, requireGender: !circleId
+  }) : [];
   const ready = built.filter((r) => !r.problem);
   const circle = usable.find((c) => c.id === circleId);
 
@@ -120,10 +122,10 @@ export function StudentImport({ circles, onClose, onDone }: { circles: Circle[];
     <Sheet title="استيراد طلاب من ملف Excel" onClose={onClose}>
       <div className="form-grid">
         <p className="muted" style={{ margin: 0 }}>
-          ارفع ملف Excel (xlsx) أو CSV يحتوي صفاً لكل طالب. الإجباري: اسم الطالب وهويته وميلاده، واسم ولي الأمر وصلته ورقم اتصاله وواتسابه. يُكتشف الإخوة تلقائياً (بهوية الولي ثم رقم الواتساب) ويُربطون بولي واحد.
+          ارفع ملف Excel (xlsx) أو CSV يحتوي صفاً لكل طالب. الإجباري: اسم الطالب وهويته وميلاده، واسم ولي الأمر ورقم اتصاله وواتسابه. عند الاستيراد بلا حلقة، أضف الجنس أيضاً. يُكتشف الإخوة تلقائياً (بهوية الولي ثم رقم الواتساب) ويُربطون بولي واحد.
         </p>
-        <button className="btn ghost small" type="button" onClick={() => downloadFile("نموذج-استيراد-الطلاب.csv", templateCsv(), "text/csv")}>
-          تنزيل نموذج جاهز (يُفتح في Excel)
+        <button className="btn ghost small" type="button" onClick={() => downloadXlsx("نموذج-استيراد-الطلاب.xlsx", templateHeaders(), [], "الطلاب")}>
+          تنزيل نموذج Excel جاهز
         </button>
 
         <Field label="الحلقة" hint={circle ? `فئة الحلقة: ${circle.category === "male" ? "ذكور" : "إناث"} — الحالي ${circle.studentCount}` : undefined}>
@@ -157,7 +159,7 @@ export function StudentImport({ circles, onClose, onDone }: { circles: Circle[];
             </fieldset>
 
             <div className="form-grid two">
-              <Field label="اتجاه الحفظ الافتراضي" hint="لمن لم يُذكر اتجاهه في الملف">
+              <Field label="اتجاه الحفظ الافتراضي">
                 <select value={direction} onChange={(e) => setDirection(e.target.value as Direction)}>
                   {(["descending", "ascending"] as Direction[]).map((d) => <option key={d} value={d}>{DIRECTION_LABELS[d]}</option>)}
                 </select>

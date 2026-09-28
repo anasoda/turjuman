@@ -1,10 +1,11 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { ROLE_LABELS, type Role } from "@shared/constants";
 import { Field, Sheet, useAction } from "../components/ui";
 import { api } from "../lib/api";
 import { useMe } from "../lib/session";
 import { fmtDay, monthIso, todayIso } from "../lib/format";
 import { useFetch } from "../lib/hooks";
+import { outboxAll, subscribeSync } from "../lib/offline";
 
 type Status = "present" | "absent" | "late" | "excused";
 const STATUS: Record<Status, string> = { present: "حاضر", late: "متأخر", excused: "بعذر", absent: "غائب" };
@@ -13,7 +14,7 @@ const NEEDS_NOTE: Status[] = ["excused", "late"];
 const NOTE_LABEL: Partial<Record<Status, string>> = { excused: "سبب العذر", late: "ملاحظة التأخر" };
 const NOTE_HINT: Partial<Record<Status, string>> = { excused: "مثال: مراجعة طبية", late: "مثال: تأخر 15 دقيقة لظرف طارئ" };
 
-interface DayRow { id: string; name: string; role: Role; status: Status | null; note: string | null }
+interface DayRow { id: string; name: string; role: Role; status: Status | null; note: string | null; pending?: boolean }
 interface SumRow { id: string; name: string; role: Role; present: number; absent: number; late: number; excused: number }
 
 /** حضور الكادر (المدير والسكرتير)، ومعلّمو مرحلته لمدير المرحلة (§15.3): تسجيل يومي وملخص شهري. */
@@ -26,6 +27,12 @@ export function StaffAttendance() {
   const sum = useFetch<{ rows: SumRow[] }>(tab === "month" ? `/api/staff-attendance/summary?month=${month}` : null);
   const { run } = useAction();
   const [noteFor, setNoteFor] = useState<{ row: DayRow; status: Status } | null>(null);
+  const [pendingMonth, setPendingMonth] = useState(false);
+  useEffect(() => {
+    const load = () => { void outboxAll().then((items) => setPendingMonth(items.some((item) => item.userId === user.id && item.status !== "rejected" && item.path === "/api/staff-attendance" && String((item.body as { date?: string }).date).startsWith(month)))); };
+    load();
+    return subscribeSync(load);
+  }, [month, user.id]);
 
   const save = async (r: DayRow, status: Status, note: string) => {
     const ok = await run(() => api("/api/staff-attendance", { method: "POST", body: { userId: r.id, date, status, note } }));
@@ -48,10 +55,11 @@ export function StaffAttendance() {
       </div>
       {tab === "day" ? <input className="input" type="date" value={date} max={todayIso()} onChange={(e) => setDate(e.target.value || todayIso())} aria-label="التاريخ" /> : <input className="input" type="month" value={month} onChange={(e) => setMonth(e.target.value || monthIso())} aria-label="الشهر" />}
       {(day.error || sum.error) && <div className="error-box">{day.error || sum.error}</div>}
+      {tab === "month" && pendingMonth && <div className="notice-box">الملخص الشهري لا يشمل سجلات الحضور التي تنتظر المزامنة بعد.</div>}
       <div className="list">
         {tab === "day" && day.data?.rows.map((r) => (
           <div key={r.id} className="card">
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><b>{r.name}</b><span className="chip gold">{ROLE_LABELS[r.role]}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><b>{r.name}</b><span className="chip gold">{ROLE_LABELS[r.role]}</span>{r.pending && <span className="chip">بانتظار المزامنة</span>}</div>
             <div className="radio-row" style={{ marginTop: 8 }} role="radiogroup" aria-label={`حضور ${r.name}`}>
               {(Object.keys(STATUS) as Status[]).map((s) => (
                 <label key={s} style={{ minWidth: 70, padding: "6px 10px" }}><input type="radio" name={`st-${r.id}`} checked={r.status === s} onChange={() => pick(r, s)} />{STATUS[s]}</label>

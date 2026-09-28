@@ -30,7 +30,9 @@ const settingsSchema = z.object({
   recitationGrades: z.array(z.string().trim().min(1).max(30)).min(2, "أضف تقديرين على الأقل").max(12),
   monthlyReportOpenDay: z.number().int().min(1).max(28),
   hijriOffset: z.number().int().min(-2, "التعديل بين −2 و+2 يوم").max(2, "التعديل بين −2 و+2 يوم"),
-  phonePrefix: z.string().trim().regex(/^[0-9]{1,5}$/, "مقدمة الدولة أرقام فقط بلا +")
+  phonePrefix: z.string().trim().regex(/^[0-9]{1,5}$/, "مقدمة الدولة أرقام فقط بلا +"),
+  examQuestionSlots: z.array(z.object({ label: z.string().trim().min(1).max(100), maxScore: z.number().int().min(1).max(100), isQuranic: z.boolean() })).min(1).max(20)
+    .refine((slots) => slots.reduce((sum, slot) => sum + slot.maxScore, 0) === 100, "مجموع علامات أسئلة الاختبار يجب أن يساوي 100")
 });
 
 settingsRoutes.get("/", requireAuth("admin", "secretary", "teacher", "stage_manager", "exam_committee"), async (c) =>

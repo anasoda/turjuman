@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api } from "./api";
+import { api, SYNC_UPDATED_EVENT } from "./api";
 
 /** يجلب مساراً عند التحميل ويوفّر reload. لا كاش؛ الترقيم والبحث بتغيير المسار. */
 export function useFetch<T>(path: string | null) {
@@ -23,6 +23,10 @@ export function useFetch<T>(path: string | null) {
 
   useEffect(() => {
     void load();
+  }, [load]);
+  useEffect(() => {
+    window.addEventListener(SYNC_UPDATED_EVENT, load);
+    return () => window.removeEventListener(SYNC_UPDATED_EVENT, load);
   }, [load]);
 
   return { data, error, loading, reload: load };

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ROLE_LABELS } from "@shared/constants";
 import { useFetch } from "../lib/hooks";
 import { useMe } from "../lib/session";
@@ -69,6 +69,7 @@ export function Dashboard() {
 
 /** بوابة ولي الأمر: تبويب لكل ابن، وبداخله بوابة الطالب نفسها. */
 function GuardianHome() {
+  const [searchParams] = useSearchParams();
   const { data, error, loading } = useFetch<{ children: GuardianChild[] }>("/api/guardians/children");
   const [picked, setPicked] = useState("");
   if (error) return <div className="error-box">{error}</div>;
@@ -82,7 +83,8 @@ function GuardianHome() {
       </section>
     );
   }
-  const current = kids.some((k) => k.id === picked) ? picked : kids[0].id;
+  const wanted = picked || searchParams.get("studentId") || "";
+  const current = kids.some((k) => k.id === wanted) ? wanted : kids[0].id;
   return (
     <>
       {kids.length > 1 && (
@@ -173,7 +175,7 @@ function TeacherHome() {
         <Tile to="/app/sard" icon={Icons.mic} title="السرد" sub="تسجيل سرد جديد" color="amber" />
         <Tile to="/app/tests" icon={Icons.award} title="الاختبارات" sub="تجريبي أو اقتراح رسمي" color="plum" />
         <Tile to="/app/reports" icon={Icons.clipboard} title="الكشف الشهري" sub="إنجاز حلقاتي" color="sky" />
-        <Tile to="/app/students" icon={Icons.users} title="طلابي" sub="بطاقات الطلاب" color="teal" />
+        <Tile to="/app/follow-up" icon={Icons.users} title="متابعة طلابي" sub="الحضور والحفظ والاختبارات" color="teal" />
       </div>
 
       <ScheduleCard />

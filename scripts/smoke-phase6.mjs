@@ -23,10 +23,10 @@ async function test(name, fn) {
   try { await fn(); passed++; console.log("✓", name); } catch (e) { console.error("✗", name, "\n   ", e.message); process.exitCode = 1; }
 }
 
-const G = "tarjuman-gaza-01";
+const G = "obai-01";
 const admin = await session(G, "admin");
-const teacher = await session(G, "gaza.teacher1"); // البذرة تسند إليه حلقتين
-const other = await session(G, "gaza.teacher3");
+const teacher = await session(G, "obai.teacher1"); // البذرة تسند إليه حلقتين
+const other = await session(G, "obai.teacher3");
 
 const all = (await call("/api/circles", { cookie: admin })).data.circles;
 const stamp = Date.now().toString().slice(-7);
@@ -136,7 +136,7 @@ await test("قائمة الكادر لا تكرّر المعلّم بعدد حل
   assert.equal(r.status, 200);
   const ids = r.data.staff.map((s) => s.id);
   assert.equal(ids.length, new Set(ids).size, "تكرّر عضو كادر في القائمة");
-  const t1 = r.data.staff.find((s) => s.username === "gaza.teacher1");
+  const t1 = r.data.staff.find((s) => s.username === "obai.teacher1");
   assert.ok(t1.circles.length >= 2, `حلقات المعلّم في القائمة: ${t1.circles.length}`);
 });
 

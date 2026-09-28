@@ -23,7 +23,7 @@ export function NotesSheet({ student, onClose }: { student: Student; onClose: ()
   };
   const remove = async (n: Note) => {
     if (!(await confirm({ title: "حذف الملاحظة؟", confirmLabel: "حذف", danger: true }))) return;
-    if (await run(() => api(`/api/notes/${n.id}`, { method: "DELETE" }), "تم الحذف")) void reload();
+    if (await confirm({ title: "تأكيد الحذف", message: "هل أنت متأكد؟ لا يمكن التراجع.", confirmLabel: "حذف", danger: true }) && await run(() => api(`/api/notes/${n.id}`, { method: "DELETE" }), "حذف")) void reload();
   };
   return (
     <Sheet title={`ملاحظات داخلية — ${student.name}`} onClose={onClose}>
@@ -58,7 +58,7 @@ export function StudentTools({ student, canHonor, onChanged }: { student: Studen
   const pick = async (file?: File) => {
     if (!file) return;
     await run(async () => {
-      const dataUrl = await compressImage(file, { max: 256, quality: 0.8, maxChars: 200_000 });
+      const dataUrl = await compressImage(file, { max: 200, quality: 0.6, maxChars: 150_000, cropSquare: true });
       await api(`/api/students/${student.id}/photo`, { method: "POST", body: { photo: dataUrl } });
       await full.reload();
       onChanged();
@@ -78,7 +78,7 @@ export function StudentTools({ student, canHonor, onChanged }: { student: Studen
       </div>
       <div className="actions">
         <button className="btn ghost small" type="button" onClick={() => setNotes(true)}>ملاحظات داخلية</button>
-        <Link className="btn ghost small" to={`/app/print/${student.id}?type=report`}>تقرير مطبوع</Link>
+        <Link className="btn ghost small" to={`/app/print/${student.id}?type=report`}>تقرير الطالب كصورة</Link>
         <Link className="btn ghost small" to={`/app/print/${student.id}?type=certificate`}>شهادة</Link>
         <Link className="btn ghost small" to={`/app/print/${student.id}?type=card`}>بطاقة</Link>
       </div>

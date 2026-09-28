@@ -1,13 +1,15 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Direction } from "../../shared/constants";
-import { countPages, countVerses, furthest, isValidRange, nextStart, sardBand, sardScore, type Position } from "../../shared/quran";
+import { countPages, countVerses, furthest, isValidRange, nextStart, rangeDirection, sardBand, sardScore, surahName, type Position } from "../../shared/quran";
 import type { AppEnv } from "../env";
 import { accessibleStudent, assertStageCircle, pickTeacherCircle, studentScope } from "../lib/access";
 import { requireAuth } from "../lib/auth";
 import { newId } from "../lib/crypto";
-import { DATE_RE, notTooFuture, todayHebron } from "../lib/dates";
+import { DATE_RE, nextWeekdayDate, notTooFuture, todayHebron, weekdayNameAr } from "../lib/dates";
 import { notifyMany, studentRecipients } from "../lib/notify";
+import { sendPush } from "../lib/push";
+import { circleOnSql } from "../lib/transfers";
 import { audit, fail, loadSettings, parseBody } from "../lib/util";
 
 /* ============================ التسميع والحضور اليومي ============================ */
@@ -21,12 +23,54 @@ const dailySchema = z.object({
   from: pos.nullable().default(null),
   to: pos.nullable().default(null),
   grade: z.string().max(30).default(""),
+  /** مسار المراجعة (§16): المحفّظ يحدّد بدايتها ونهايتها بحرية، وتُقترح بداية اليوم من نهاية آخر مراجعة */
+  review: z.object({ from: pos, to: pos, grade: z.string().max(30).default("") }).nullable().default(null),
+  /** المطلوب من الطالب في اللقاء القادم: حفظ ومراجعة معاً ممكنان؛ يُرسَل إشعاراً فورياً لولي الأمر عند تغييره */
+  next: z.object({
+    memorize: z.object({ from: pos, to: pos }).nullable().default(null),
+    review: z.object({ from: pos, to: pos }).nullable().default(null),
+    note: z.string().trim().max(300).default("")
+  }).nullable().default(null),
   note: z.string().trim().max(500).default("")
 }).refine((b) => !["excused", "late"].includes(b.attendance) || b.note.length >= 2, { message: "اكتب سبب العذر أو التأخر (ملاحظة إجبارية)", path: ["note"] });
 
 const DAILY_SELECT = `SELECT d.id, d.student_id AS studentId, d.date, d.attendance, d.direction,
         d.from_surah AS fromSurah, d.from_ayah AS fromAyah, d.to_surah AS toSurah, d.to_ayah AS toAyah,
-        d.verses, d.pages, d.grade, d.note, d.updated_at AS updatedAt FROM daily_records d`;
+        d.verses, d.pages, d.grade, d.note, d.updated_at AS updatedAt,
+        d.review_from_surah AS reviewFromSurah, d.review_from_ayah AS reviewFromAyah, d.review_to_surah AS reviewToSurah, d.review_to_ayah AS reviewToAyah,
+        d.review_verses AS reviewVerses, d.review_pages AS reviewPages, d.review_grade AS reviewGrade,
+        d.next_memorize_from_surah AS nextMemorizeFromSurah, d.next_memorize_from_ayah AS nextMemorizeFromAyah,
+        d.next_memorize_to_surah AS nextMemorizeToSurah, d.next_memorize_to_ayah AS nextMemorizeToAyah,
+        d.next_review_from_surah AS nextReviewFromSurah, d.next_review_from_ayah AS nextReviewFromAyah,
+        d.next_review_to_surah AS nextReviewToSurah, d.next_review_to_ayah AS nextReviewToAyah, d.next_note AS nextNote
+        FROM daily_records d`;
+
+type ReviewEnd = { studentId: string; fromSurah: number; fromAyah: number; toSurah: number; toAyah: number };
+
+/** رقم يوم الأسبوع للتاريخ (الأحد = 0 مثل circle_schedule.weekday). */
+function weekdayOf(date: string) {
+  return new Date(`${date}T00:00:00Z`).getUTCDay();
+}
+
+async function circleHasSession(db: D1Database, circleId: string, date: string) {
+  const row = await db.prepare("SELECT 1 AS ok FROM circle_schedule WHERE circle_id = ? AND weekday = ? LIMIT 1")
+    .bind(circleId, weekdayOf(date)).first<{ ok: number }>();
+  return !!row;
+}
+
+/** آخر مراجعة قبل التاريخ لكل طالب في حلقة، ومنها يُقترح موضع بداية المراجعة (نهايتها + آية). */
+async function lastReviews(db: D1Database, centerId: string, circleId: string, before: string): Promise<Map<string, ReviewEnd>> {
+  const { results } = await db.prepare(
+    `SELECT d.student_id AS studentId, d.review_from_surah AS fromSurah, d.review_from_ayah AS fromAyah, d.review_to_surah AS toSurah, d.review_to_ayah AS toAyah
+       FROM daily_records d
+      WHERE d.center_id = ? AND d.review_to_surah IS NOT NULL AND d.date < ?
+        AND d.student_id IN (SELECT s.id FROM students s WHERE s.center_id = ? AND ${circleOnSql("s")} = ?)
+      ORDER BY d.date DESC`
+  ).bind(centerId, before, centerId, before, circleId).all<ReviewEnd>();
+  const out = new Map<string, ReviewEnd>();
+  for (const r of results) if (!out.has(r.studentId)) out.set(r.studentId, r);
+  return out;
+}
 
 /** لوحة اليوم: طلاب حلقة ما وسجل كل طالب في التاريخ المطلوب (للتسجيل السريع). */
 dailyRoutes.get("/board", requireAuth("admin", "secretary", "teacher", "stage_manager"), async (c) => {
@@ -40,20 +84,31 @@ dailyRoutes.get("/board", requireAuth("admin", "secretary", "teacher", "stage_ma
   if (auth.role === "stage_manager") await assertStageCircle(c, circleId);
   const circle = await c.env.DB.prepare("SELECT id, name FROM circles WHERE id = ? AND center_id = ?").bind(circleId, auth.centerId).first<{ id: string; name: string }>();
   if (!circle) fail(404, "الحلقة غير موجودة");
+  const scheduled = await circleHasSession(c.env.DB, circleId, date);
   const { results: students } = await c.env.DB.prepare(
-    `SELECT id, name, direction, last_surah AS lastSurah, last_ayah AS lastAyah, monthly_plan_pages AS monthlyPlanPages
-       FROM students WHERE center_id = ? AND circle_id = ? AND archived_at IS NULL ORDER BY name`
-  ).bind(auth.centerId, circleId).all<{ id: string; name: string; direction: Direction; lastSurah: number; lastAyah: number; monthlyPlanPages: number }>();
-  const { results: recs } = await c.env.DB.prepare(`${DAILY_SELECT} JOIN students s ON s.id = d.student_id WHERE d.center_id = ? AND s.circle_id = ? AND d.date = ?`)
-    .bind(auth.centerId, circleId, date).all<{ studentId: string }>();
+    `SELECT s.id, s.name, s.direction, s.last_surah AS lastSurah, s.last_ayah AS lastAyah, s.monthly_plan_pages AS monthlyPlanPages, s.monthly_review_plan_pages AS monthlyReviewPlanPages
+       FROM students s WHERE s.center_id = ? AND ${circleOnSql("s")} = ? AND s.archived_at IS NULL ORDER BY s.name`
+  ).bind(auth.centerId, date, circleId).all<{ id: string; name: string; direction: Direction; lastSurah: number; lastAyah: number; monthlyPlanPages: number }>();
+  const { results: recs } = await c.env.DB.prepare(`${DAILY_SELECT} JOIN students s ON s.id = d.student_id WHERE d.center_id = ? AND ${circleOnSql("s")} = ? AND d.date = ?`)
+    .bind(auth.centerId, date, circleId, date).all<{ studentId: string }>();
   const byStudent = new Map(recs.map((r) => [r.studentId, r]));
-  const { results: notices } = await c.env.DB.prepare("SELECT n.student_id AS studentId, n.reason FROM absence_notices n JOIN students s ON s.id = n.student_id WHERE n.center_id = ? AND s.circle_id = ? AND n.date = ?").bind(auth.centerId, circleId, date).all<{ studentId: string; reason: string }>();
+  const lastRev = await lastReviews(c.env.DB, auth.centerId, circleId, date);
+  const { results: notices } = await c.env.DB.prepare(`SELECT n.student_id AS studentId, n.reason FROM absence_notices n JOIN students s ON s.id = n.student_id WHERE n.center_id = ? AND ${circleOnSql("s")} = ? AND n.date = ?`).bind(auth.centerId, date, circleId, date).all<{ studentId: string; reason: string }>();
   const noticeBy = new Map(notices.map((n) => [n.studentId, n.reason]));
   return c.json({
-    date, circleId, circleName: circle.name,
-    rows: students.map((s) => ({ student: { ...s, nextStart: nextStart(s.direction, { surah: s.lastSurah, ayah: s.lastAyah }) }, record: byStudent.get(s.id) ?? null, absenceNotice: noticeBy.get(s.id) ?? null }))
+    date, circleId, circleName: circle.name, scheduled,
+    rows: students.map((s) => ({ student: { ...s, nextStart: nextStart(s.direction, { surah: s.lastSurah, ayah: s.lastAyah }), ...reviewHint(s.direction, lastRev.get(s.id)) }, record: byStudent.get(s.id) ?? null, absenceNotice: noticeBy.get(s.id) ?? null }))
   });
 });
+
+/** مقترح بداية المراجعة (بعد نهاية آخر مراجعة وفق اتجاه تلك المراجعة) وآخر نهاية للعرض. */
+function reviewHint(direction: Direction, last: ReviewEnd | undefined) {
+  if (!last) return { reviewNext: null, reviewLast: null };
+  const from = { surah: last.fromSurah, ayah: last.fromAyah };
+  const to = { surah: last.toSurah, ayah: last.toAyah };
+  const dir = rangeDirection(direction, from, to) ?? direction;
+  return { reviewNext: nextStart(dir, to), reviewLast: to };
+}
 
 dailyRoutes.get("/", requireAuth("admin", "secretary", "teacher", "stage_manager", "exam_committee"), async (c) => {
   const url = new URL(c.req.url);
@@ -70,30 +125,78 @@ dailyRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_manage
   if (!notTooFuture(b.date)) fail(400, "لا يمكن التسجيل في تاريخ مستقبلي");
   const student = await accessibleStudent(c, b.studentId);
   if (student.archivedAt) fail(400, "الطالب مؤرشف");
+  const circleId = await c.env.DB.prepare("SELECT circle_id AS circleId FROM students WHERE id = ? AND center_id = ?").bind(student.id, auth.centerId).first<{ circleId: string | null }>();
+  if (!circleId?.circleId || !(await circleHasSession(c.env.DB, circleId.circleId, b.date))) {
+    fail(400, "لا يوجد موعد لهذه الحلقة في هذا اليوم");
+  }
   const settings = await loadSettings(c.env.DB, auth.centerId);
   if (b.grade && !settings.recitationGrades.includes(b.grade)) fail(400, "التقييم غير موجود في مقياس المركز");
+  if (b.review?.grade && !settings.recitationGrades.includes(b.review.grade)) fail(400, "تقييم المراجعة غير موجود في مقياس المركز");
 
   let verses = 0, pages = 0;
   let from: Position | null = null, to: Position | null = null;
-  // الغائب (بعذر أو دونه) لا تسميع له؛ الحاضر والمتأخر يُسجَّل تسميعهما
+  let rFrom: Position | null = null, rTo: Position | null = null;
+  let rVerses = 0, rPages = 0;
+  // الغائب (بعذر أو دونه) لا تسميع ولا مراجعة له؛ الحاضر والمتأخر يُسجَّل حفظهما و/أو مراجعتهما (واحد منهما على الأقل)
   if (b.attendance === "present" || b.attendance === "late") {
-    if (!b.from || !b.to) fail(400, "حدّد بداية التسميع ونهايته");
-    from = b.from; to = b.to;
-    if (!isValidRange(student.direction, from, to)) fail(400, "نهاية التسميع يجب ألا تسبق بدايته وفق اتجاه حفظ الطالب");
-    verses = countVerses(student.direction, from, to);
-    pages = countPages(student.direction, from, to);
+    if (!b.from && !b.to && !b.review) fail(400, "حدّد نطاق الحفظ الجديد أو المراجعة (واحداً على الأقل)");
+    if (b.from || b.to) {
+      if (!b.from || !b.to) fail(400, "حدّد بداية الحفظ ونهايته");
+      from = b.from; to = b.to;
+      if (!isValidRange(student.direction, from, to)) fail(400, "نهاية الحفظ يجب ألا تسبق بدايته وفق اتجاه حفظ الطالب");
+      verses = countVerses(student.direction, from, to);
+      pages = countPages(student.direction, from, to);
+    }
+    if (b.review) {
+      rFrom = b.review.from; rTo = b.review.to;
+      const dir = rangeDirection(student.direction, rFrom, rTo);
+      if (!dir) fail(400, "نهاية المراجعة تسبق بدايتها");
+      rVerses = countVerses(dir!, rFrom, rTo);
+      rPages = countPages(dir!, rFrom, rTo);
+    }
+  }
+  // المطلوب في اللقاء القادم: حفظ ومراجعة معاً ممكنان؛ يُتاح فقط عند الحضور الفعلي (present/late)
+  let nMemFrom: Position | null = null, nMemTo: Position | null = null;
+  let nRevFrom: Position | null = null, nRevTo: Position | null = null;
+  if ((b.attendance === "present" || b.attendance === "late") && b.next) {
+    if (!b.next.memorize && !b.next.review) fail(400, "حدّد حفظاً أو مراجعة للمطلوب القادم (أو الاثنين)");
+    if (b.next.memorize) {
+      nMemFrom = b.next.memorize.from; nMemTo = b.next.memorize.to;
+      if (!isValidRange(student.direction, nMemFrom, nMemTo)) fail(400, "نهاية حفظ اللقاء القادم يجب ألا تسبق بدايته وفق اتجاه حفظ الطالب");
+    }
+    if (b.next.review) {
+      nRevFrom = b.next.review.from; nRevTo = b.next.review.to;
+      if (!rangeDirection(student.direction, nRevFrom, nRevTo)) fail(400, "نهاية مراجعة اللقاء القادم تسبق بدايتها");
+    }
   }
   const now = Date.now();
-  const existing = await c.env.DB.prepare("SELECT id FROM daily_records WHERE student_id = ? AND date = ?").bind(student.id, b.date).first<{ id: string }>();
+  const existing = await c.env.DB.prepare(
+    `SELECT id, next_memorize_from_surah AS mfs, next_memorize_from_ayah AS mfa, next_memorize_to_surah AS mts, next_memorize_to_ayah AS mta,
+            next_review_from_surah AS rfs, next_review_from_ayah AS rfa, next_review_to_surah AS rts, next_review_to_ayah AS rta
+       FROM daily_records WHERE student_id = ? AND date = ?`
+  ).bind(student.id, b.date).first<{ id: string; mfs: number | null; mfa: number | null; mts: number | null; mta: number | null; rfs: number | null; rfa: number | null; rts: number | null; rta: number | null }>();
   const id = existing?.id ?? newId();
   await c.env.DB.prepare(
-    `INSERT INTO daily_records (id, center_id, student_id, recorded_by, date, attendance, direction, from_surah, from_ayah, to_surah, to_ayah, verses, pages, grade, note, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(student_id, date) DO UPDATE SET recorded_by = excluded.recorded_by, attendance = excluded.attendance, direction = excluded.direction,
+    `INSERT INTO daily_records (id, center_id, student_id, circle_id, recorded_by, date, attendance, direction, from_surah, from_ayah, to_surah, to_ayah, verses, pages, grade, note, created_at, updated_at,
+                                review_from_surah, review_from_ayah, review_to_surah, review_to_ayah, review_verses, review_pages, review_grade,
+                                next_memorize_from_surah, next_memorize_from_ayah, next_memorize_to_surah, next_memorize_to_ayah,
+                                next_review_from_surah, next_review_from_ayah, next_review_to_surah, next_review_to_ayah, next_note)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(student_id, date) DO UPDATE SET circle_id = excluded.circle_id, recorded_by = excluded.recorded_by, attendance = excluded.attendance, direction = excluded.direction,
        from_surah = excluded.from_surah, from_ayah = excluded.from_ayah, to_surah = excluded.to_surah, to_ayah = excluded.to_ayah,
-       verses = excluded.verses, pages = excluded.pages, grade = excluded.grade, note = excluded.note, updated_at = excluded.updated_at`
-  ).bind(id, auth.centerId, student.id, auth.userId, b.date, b.attendance, student.direction, from?.surah ?? null, from?.ayah ?? null, to?.surah ?? null, to?.ayah ?? null,
-    verses, pages, b.grade, b.note, now, now).run();
+       verses = excluded.verses, pages = excluded.pages, grade = excluded.grade, note = excluded.note, updated_at = excluded.updated_at,
+       review_from_surah = excluded.review_from_surah, review_from_ayah = excluded.review_from_ayah, review_to_surah = excluded.review_to_surah, review_to_ayah = excluded.review_to_ayah,
+       review_verses = excluded.review_verses, review_pages = excluded.review_pages, review_grade = excluded.review_grade,
+       next_memorize_from_surah = excluded.next_memorize_from_surah, next_memorize_from_ayah = excluded.next_memorize_from_ayah,
+       next_memorize_to_surah = excluded.next_memorize_to_surah, next_memorize_to_ayah = excluded.next_memorize_to_ayah,
+       next_review_from_surah = excluded.next_review_from_surah, next_review_from_ayah = excluded.next_review_from_ayah,
+       next_review_to_surah = excluded.next_review_to_surah, next_review_to_ayah = excluded.next_review_to_ayah, next_note = excluded.next_note`
+  ).bind(id, auth.centerId, student.id, circleId.circleId, auth.userId, b.date, b.attendance, student.direction, from?.surah ?? null, from?.ayah ?? null, to?.surah ?? null, to?.ayah ?? null,
+    verses, pages, b.grade, b.note, now, now,
+    rFrom?.surah ?? null, rFrom?.ayah ?? null, rTo?.surah ?? null, rTo?.ayah ?? null, rVerses, rPages, b.review?.grade ?? "",
+    nMemFrom?.surah ?? null, nMemFrom?.ayah ?? null, nMemTo?.surah ?? null, nMemTo?.ayah ?? null,
+    nRevFrom?.surah ?? null, nRevFrom?.ayah ?? null, nRevTo?.surah ?? null, nRevTo?.ayah ?? null,
+    b.next?.note ?? "").run();
 
   // آخر موضع محفوظ يتقدّم تلقائياً (لا يتراجع عند التعديل/الحذف — يعدّله الكادر يدوياً من بطاقة الطالب)
   if (to) {
@@ -106,9 +209,32 @@ dailyRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_manage
   if (b.attendance === "absent") {
     const uids = await studentRecipients(c.env.DB, student.id);
     await notifyMany(c.env.DB, uids, { centerId: auth.centerId, kind: "absence", title: "تسجيل غياب", body: `سُجّل غياب ${student.name} بتاريخ ${b.date}. إن كان لعذر فأبلغ المحفّظ من البوابة.` });
+    await sendPush(c.env.DB, c.env, auth.centerId, uids, { title: "تسجيل غياب", body: `سُجّل غياب ${student.name} بتاريخ ${b.date}.`, link: "/app" });
+  }
+  // إشعار المطلوب في اللقاء القادم: فقط عند التعيين الجديد أو تغييره عن سابقه (لا تكرار عند تعديل غير متعلق به)
+  const posEq = (a: Position | null, b: Position | null) => (a?.surah ?? null) === (b?.surah ?? null) && (a?.ayah ?? null) === (b?.ayah ?? null);
+  const existingMemFrom: Position | null = existing?.mfs ? { surah: existing.mfs, ayah: existing.mfa! } : null;
+  const existingMemTo: Position | null = existing?.mts ? { surah: existing.mts, ayah: existing.mta! } : null;
+  const existingRevFrom: Position | null = existing?.rfs ? { surah: existing.rfs, ayah: existing.rfa! } : null;
+  const existingRevTo: Position | null = existing?.rts ? { surah: existing.rts, ayah: existing.rta! } : null;
+  const nextChanged =
+    !posEq(nMemFrom, existingMemFrom) || !posEq(nMemTo, existingMemTo) || !posEq(nRevFrom, existingRevFrom) || !posEq(nRevTo, existingRevTo);
+  if ((nMemFrom || nRevFrom) && nextChanged) {
+    const { results: sched } = await c.env.DB.prepare("SELECT weekday FROM circle_schedule WHERE circle_id = ?").bind(circleId.circleId).all<{ weekday: number }>();
+    const nextDate = nextWeekdayDate(b.date, sched.map((r) => r.weekday));
+    const when = nextDate ? `${weekdayNameAr(nextDate)} ${nextDate}` : "اللقاء القادم";
+    const rangeText = (from: Position, to: Position) => `من ${surahName(from.surah)} آية ${from.ayah} إلى ${from.surah === to.surah ? "آية" : `${surahName(to.surah)} آية`} ${to.ayah}`;
+    const parts: string[] = [];
+    if (nMemFrom) parts.push(`حفظاً: ${rangeText(nMemFrom, nMemTo!)}`);
+    if (nRevFrom) parts.push(`مراجعة: ${rangeText(nRevFrom, nRevTo!)}`);
+    // اسم الطالب إلزامي في المتن: ولي الأمر قد يكون له أكثر من ابن، فبدونه لا يُعرَف المقصود بالإشعار
+    const body = `الطالب: ${student.name}\nالمطلوب في اللقاء القادم (${when}):\n${parts.join("\n")}${b.next!.note ? `\n${b.next!.note}` : ""}`;
+    const uids = await studentRecipients(c.env.DB, student.id);
+    await notifyMany(c.env.DB, uids, { centerId: auth.centerId, kind: "assignment", title: "تسميع اليوم", body, sourceId: id });
+    await sendPush(c.env.DB, c.env, auth.centerId, uids, { title: "المطلوب في اللقاء القادم", body, link: "/app" });
   }
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: existing ? "update" : "create", entity: "daily", entityId: id, details: `${student.name} ${b.date}` });
-  return c.json({ ok: true, id, verses, pages }, existing ? 200 : 201);
+  return c.json({ ok: true, id, verses, pages, reviewVerses: rVerses, reviewPages: rPages }, existing ? 200 : 201);
 });
 
 dailyRoutes.delete("/:id", requireAuth("admin", "secretary", "teacher", "stage_manager"), async (c) => {
@@ -139,7 +265,7 @@ const sardSchema = z.object({
 const SARD_SELECT = `SELECT r.id, r.student_id AS studentId, s.name AS studentName, c.name AS circleName, r.date, r.stage, r.direction,
         r.from_surah AS fromSurah, r.from_ayah AS fromAyah, r.to_surah AS toSurah, r.to_ayah AS toAyah,
         r.verses, r.mistakes, r.alerts, r.score, r.band, u.display_name AS recordedByName
-   FROM sard_records r JOIN students s ON s.id = r.student_id LEFT JOIN circles c ON c.id = s.circle_id LEFT JOIN users u ON u.id = r.recorded_by`;
+   FROM sard_records r JOIN students s ON s.id = r.student_id LEFT JOIN circles c ON c.id = r.circle_id LEFT JOIN users u ON u.id = r.recorded_by`;
 
 sardRoutes.get("/", requireAuth("admin", "secretary", "teacher", "stage_manager", "exam_committee"), async (c) => {
   const auth = c.get("auth");
@@ -153,7 +279,7 @@ sardRoutes.get("/", requireAuth("admin", "secretary", "teacher", "stage_manager"
   const binds: unknown[] = [auth.centerId, ...scope.binds];
   if (studentId) { where += " AND r.student_id = ?"; binds.push(studentId); }
   if (q) { where += " AND (s.name LIKE ? OR c.name LIKE ?)"; binds.push(`%${q}%`, `%${q}%`); }
-  const total = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM sard_records r JOIN students s ON s.id = r.student_id LEFT JOIN circles c ON c.id = s.circle_id WHERE ${where}`).bind(...binds).first<{ n: number }>();
+  const total = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM sard_records r JOIN students s ON s.id = r.student_id LEFT JOIN circles c ON c.id = r.circle_id WHERE ${where}`).bind(...binds).first<{ n: number }>();
   const { results } = await c.env.DB.prepare(`${SARD_SELECT} WHERE ${where} ORDER BY r.date DESC, r.created_at DESC LIMIT ? OFFSET ?`).bind(...binds, pageSize, (page - 1) * pageSize).all();
   return c.json({ records: results, total: total?.n ?? 0, page, pageSize });
 });
@@ -175,9 +301,9 @@ sardRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_manager
     if (dup) return c.json({ ok: true, id, duplicate: true });
   }
   await c.env.DB.prepare(
-    `INSERT INTO sard_records (id, center_id, student_id, recorded_by, date, stage, direction, from_surah, from_ayah, to_surah, to_ayah, verses, mistakes, alerts, score, band, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, auth.centerId, student.id, auth.userId, b.date, b.stage, student.direction, b.from.surah, b.from.ayah, b.to.surah, b.to.ayah, verses, b.mistakes, b.alerts, score, band, Date.now()).run();
+    `INSERT INTO sard_records (id, center_id, student_id, circle_id, recorded_by, date, stage, direction, from_surah, from_ayah, to_surah, to_ayah, verses, mistakes, alerts, score, band, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, auth.centerId, student.id, student.circleId, auth.userId, b.date, b.stage, student.direction, b.from.surah, b.from.ayah, b.to.surah, b.to.ayah, verses, b.mistakes, b.alerts, score, band, Date.now()).run();
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "create", entity: "sard", entityId: id, details: `${student.name}: ${score} (${band})` });
   return c.json({ ok: true, id, score, band, verses }, 201);
 });

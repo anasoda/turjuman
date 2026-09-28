@@ -33,6 +33,16 @@ export function isValidRange(direction: Direction, from: Position, to: Position)
   return isValidPosition(from) && isValidPosition(to) && orderKey(direction, from) <= orderKey(direction, to);
 }
 
+/**
+ * اتجاه نطاق المراجعة: المحفّظ يختار البداية والنهاية بحرية (§16)، فقد يراجع طالبٌ تنازلي مقطعاً بترتيب المصحف.
+ * يُفضَّل اتجاه الطالب، وإن لم يصلح النطاق به جُرّب العكس، وإلا null (النهاية تسبق البداية في الاتجاهين).
+ */
+export function rangeDirection(preferred: Direction, from: Position, to: Position): Direction | null {
+  if (isValidRange(preferred, from, to)) return preferred;
+  const other: Direction = preferred === "descending" ? "ascending" : "descending";
+  return isValidRange(other, from, to) ? other : null;
+}
+
 /** السورة التالية في مسار الحفظ (أو null عند نهاية المسار). */
 export function nextSurah(direction: Direction, surah: number): number | null {
   const n = direction === "descending" ? surah - 1 : surah + 1;
@@ -139,6 +149,29 @@ export function completedJuz(direction: Direction, last: Position): number {
     if (last.surah * 1000 + last.ayah >= end.surah * 1000 + end.ayah) done++;
   }
   return done;
+}
+
+/** عدد الأجزاء التي يلامسها نطاق قرآني (بترتيب المصحف من الفاتحة إلى الناس). */
+export function partsInRange(from: Position, to: Position): number {
+  if (!isValidRange("ascending", from, to)) return 0;
+  let count = 0;
+  for (let k = 0; k < JUZ_START.length; k++) {
+    const start = JUZ_START[k];
+    const end = k === JUZ_START.length - 1 ? { surah: 114, ayah: ayahCount(114) } : prevAyah(JUZ_START[k + 1]);
+    if (orderKey("ascending", from) <= orderKey("ascending", end) && orderKey("ascending", to) >= orderKey("ascending", start)) count++;
+  }
+  return count;
+}
+
+/** رقم الجزء الذي تقع فيه آية محددة. */
+export function juzForPosition(position: Position): number | null {
+  if (!isValidPosition(position)) return null;
+  let juz = 1;
+  for (let i = 1; i < JUZ_START.length; i++) {
+    if (orderKey("ascending", position) < orderKey("ascending", JUZ_START[i])) break;
+    juz = i + 1;
+  }
+  return juz;
 }
 
 /** الآية السابقة في ترتيب المصحف العادي. */

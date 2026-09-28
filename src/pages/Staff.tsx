@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
-import { AJKAM_COURSES, GENDER_LABELS, MIN_PASSWORD, QUALIFICATIONS, ROLE_LABELS, STAFF_ROLES, USERNAME_RE, type Gender, type StaffRole } from "@shared/constants";
+import { AJKAM_COURSES, GENDER_LABELS, MIN_PASSWORD, QUALIFICATIONS, ROLE_LABELS, STAFF_ROLES, USERNAME_RE, WA_PREFIXES, WA_PREFIX_LABELS, type Gender, type StaffRole } from "@shared/constants";
 import { ContactIcons, ContactRow } from "../components/Contact";
-import { Field, Icons, Sheet, useAction } from "../components/ui";
+import { Field, Icons, Sheet, useAction, useUi } from "../components/ui";
 import { api } from "../lib/api";
 import { initials, useFetch, useWantsNew } from "../lib/hooks";
 import { useMe } from "../lib/session";
@@ -60,6 +60,7 @@ export function StaffPage() {
 
 function StaffForm({ staff, defaultRole, allowed, onClose, onSaved }: { staff: Staff | null; defaultRole: StaffRole; allowed: readonly StaffRole[]; onClose: () => void; onSaved: () => void }) {
   const { busy, run } = useAction();
+  const { confirm } = useUi();
   const { settings } = useMe();
   const [role, setRole] = useState<StaffRole>((staff?.role as StaffRole) ?? defaultRole);
   const [stages, setStages] = useState<string[]>(staff?.stages ?? []);
@@ -70,6 +71,13 @@ function StaffForm({ staff, defaultRole, allowed, onClose, onSaved }: { staff: S
 
   if (pw && staff) return <PasswordSheet staff={staff} onClose={() => setPw(false)} />;
 
+  const remove = async () => {
+    if (!staff) return;
+    const message = "يُحذف الحساب وبياناته الشخصية وحضوره وإشعاراته نهائياً، وتبقى سجلات التسميع والاختبارات والكشوف بلا اسم كاتبها. لا يمكن التراجع. وإن أردت إيقافه مؤقتاً فألغِ «الحساب فعّال» بدل الحذف.";
+    if (!(await confirm({ title: `حذف ${staff.displayName}؟`, message, confirmLabel: "حذف", danger: true }))) return;
+    if (await confirm({ title: "تأكيد الحذف", message: "هل أنت متأكد؟ لا يمكن التراجع.", confirmLabel: "حذف", danger: true }) && await run(() => api(`/api/staff/${staff.id}`, { method: "DELETE" }), "حذف")) onSaved();
+  };
+
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -77,7 +85,7 @@ function StaffForm({ staff, defaultRole, allowed, onClose, onSaved }: { staff: S
     const profile = { displayName: s("displayName"), nationalId: s("nationalId"), phone: s("phone"), waCc: s("waCc") || "970", waNational: s("waNational"), birth: s("birth"), gender, email: s("email"), address: s("address"), qualification: s("qualification"), ajkamCourse: s("ajkamCourse"), memorizedParts: Number(f.get("memorizedParts") || 0) };
     if (role === "stage_manager" && !stages.length) return void (await run(async () => { throw new Error("اختر مرحلة واحدة على الأقل لمدير المرحلة"); }));
     if (editing) {
-      const body = { ...profile, active: f.get("active") === "on", ...(staff.role === "stage_manager" ? { stages } : {}) };
+      const body = { ...profile, active: f.get("active") === "on", ...(staff.role === "stage_manager" || staff.role === "teacher" ? { stages } : {}) };
       if (await run(() => api(`/api/staff/${staff.id}`, { method: "PATCH", body }), "تم حفظ التعديلات")) onSaved();
       return;
     }
@@ -94,8 +102,8 @@ function StaffForm({ staff, defaultRole, allowed, onClose, onSaved }: { staff: S
             <select value={role} onChange={(e) => setRole(e.target.value as StaffRole)}>{allowed.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}</select>
           </Field>
         )}
-        {role === "stage_manager" && (
-          <Field label="المراحل التي يديرها" hint="يرى طلاب حلقات هذه المراحل ويسجّل حضور معلّميها">
+        {(role === "stage_manager" || (editing && staff?.role === "teacher")) && (
+          <Field label="المراحل التي يديرها" hint="اختيار مرحلة يحوّل هذا المعلّم إلى مدير مرحلة؛ إلغاء كل الاختيارات يلغي التعيين">
             <div className="radio-row">
               {settings.levels.map((l) => (
                 <label key={l.key} style={{ minWidth: 110 }}>
@@ -107,19 +115,16 @@ function StaffForm({ staff, defaultRole, allowed, onClose, onSaved }: { staff: S
         )}
         <Field label="الاسم الرباعي"><input name="displayName" required minLength={8} defaultValue={staff?.displayName} /></Field>
         <div className="form-grid two">
-          <Field label="رقم الهوية"><input name="nationalId" required pattern="[0-9]{9}" inputMode="numeric" defaultValue={staff?.nationalId ?? ""} dir="ltr" /></Field>
-          <Field label="جوال الاتصال"><input name="phone" required pattern="05[96][0-9]{7}" inputMode="tel" placeholder="0591234567" defaultValue={staff?.phone ?? ""} dir="ltr" /></Field>
+          <Field label="رقم الهوية"><input name="nationalId" required pattern="[0-9]{9}" title="رقم الهوية يجب أن يتكون من 9 خانات" inputMode="numeric" defaultValue={staff?.nationalId ?? ""} dir="ltr" /></Field>
+          <Field label="جوال الاتصال"><input name="phone" required pattern="05[96][0-9]{7}" title="يجب أن يبدأ بـ 059 أو 056 ويتكون من 10 خانات" inputMode="tel" placeholder="0591234567" defaultValue={staff?.phone ?? ""} dir="ltr" /></Field>
         </div>
         <div className="form-grid two">
           <Field label="مقدمة الواتساب">
             <select name="waCc" defaultValue={staff?.waCc || "970"}>
-              <option value="970">+970 فلسطين</option>
-              <option value="962">+962 الأردن</option>
-              <option value="20">+20 مصر</option>
-              <option value="966">+966 السعودية</option>
+              {WA_PREFIXES.map((code) => <option key={code} value={code}>{WA_PREFIX_LABELS[code]}</option>)}
             </select>
           </Field>
-          <Field label="جوال الواتساب" hint="اتركه فارغاً إن كان نفس رقم الاتصال"><input name="waNational" inputMode="tel" placeholder="0599876543" defaultValue={staff?.waNational ?? ""} dir="ltr" /></Field>
+          <Field label="جوال الواتساب"><input name="waNational" pattern="05[96][0-9]{7}" title="يجب أن يبدأ بـ 059 أو 056 ويتكون من 10 خانات" inputMode="tel" placeholder="0599876543" defaultValue={staff?.waNational ?? ""} dir="ltr" /></Field>
         </div>
         {editing && (
           <div className="contact-block">
@@ -153,6 +158,7 @@ function StaffForm({ staff, defaultRole, allowed, onClose, onSaved }: { staff: S
         <div className="actions">
           <button className="btn" disabled={busy}>{editing ? "حفظ" : "إنشاء الحساب"}</button>
           {editing && <button className="btn ghost" type="button" onClick={() => setPw(true)}>كلمة مرور جديدة</button>}
+          {editing && <button className="btn ghost danger" type="button" disabled={busy} onClick={() => void remove()}>حذف الحساب</button>}
         </div>
       </form>
     </Sheet>

@@ -13,6 +13,7 @@ import { Sard } from "./pages/Sard";
 import { Tests } from "./pages/Tests";
 import { Announcements } from "./pages/Announcements";
 import { Honor } from "./pages/Honor";
+import { FollowUp } from "./pages/FollowUp";
 import { Insights } from "./pages/Insights";
 import { Notifications } from "./pages/Notifications";
 import { PrayerAdmin } from "./pages/Prayer";
@@ -54,6 +55,7 @@ export function App() {
       <Route path="/app" element={me ? <Shell /> : <Navigate to="/login" replace />}>
         <Route index element={<Dashboard />} />
         <Route path="students" element={<Only roles={["admin", "secretary", "teacher", "stage_manager", "exam_committee"]}><Students /></Only>} />
+        <Route path="follow-up" element={<Only roles={["admin", "secretary", "teacher", "stage_manager", "exam_committee"]}><FollowUp /></Only>} />
         <Route path="daily" element={<Only roles={["admin", "secretary", "teacher", "stage_manager"]}><Daily /></Only>} />
         <Route path="sard" element={<Only roles={["admin", "secretary", "teacher", "stage_manager", "exam_committee"]}><Sard /></Only>} />
         <Route path="tests" element={<Only roles={["admin", "secretary", "teacher", "stage_manager", "exam_committee"]}><Tests /></Only>} />
@@ -67,9 +69,9 @@ export function App() {
         <Route path="prayer" element={<Only roles={["admin"]}><PrayerAdmin /></Only>} />
         <Route path="print/:id" element={<Only roles={["admin", "secretary", "teacher", "stage_manager", "exam_committee"]}><PrintStudent /></Only>} />
         <Route path="archive" element={<Only roles={["admin", "secretary"]}><Archive /></Only>} />
-        <Route path="circles" element={<Only roles={["admin", "secretary", "stage_manager"]}><Circles /></Only>} />
+        <Route path="circles" element={<Only roles={["admin", "secretary", "teacher", "stage_manager"]}><Circles /></Only>} />
         <Route path="staff" element={<Only roles={["admin", "secretary"]}><StaffPage /></Only>} />
-        <Route path="guardians" element={<Only roles={["admin", "secretary"]}><Guardians /></Only>} />
+        <Route path="guardians" element={<Only roles={["admin", "secretary", "teacher"]}><Guardians /></Only>} />
         <Route path="settings" element={<Only roles={["admin"]}><SettingsPage /></Only>} />
         <Route path="center" element={<Only roles={["admin"]}><CenterIdentity /></Only>} />
         <Route path="audit" element={<Only roles={["admin"]}><AuditLog /></Only>} />

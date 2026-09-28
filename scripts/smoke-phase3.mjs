@@ -19,19 +19,25 @@ async function test(name, fn) {
   try { await fn(); passed++; console.log("✓", name); } catch (e) { console.error("✗", name, "\n   ", e.message); process.exitCode = 1; }
 }
 
-const G = "tarjuman-gaza-01";
+const G = "obai-01";
 const admin = await session(G, "admin");
-const teacher = await session(G, "gaza.teacher1");
-const teacher3 = await session(G, "gaza.teacher3");
-const secretary = await session(G, "gaza.secretary");
+const teacher = await session(G, "obai.teacher1");
+const teacher3 = await session(G, "obai.teacher3");
+const secretary = await session(G, "obai.secretary");
 const student = await session(G, "801000001", "801000001");
 const student2 = student; // نفس ولي الأمر يغطي عمر وياسين
 
-const students = (await call("/api/students", { cookie: admin })).data.students;
-const s1 = students.find((s) => s.name.startsWith("عمر"));
-const s3 = students.find((s) => s.name.startsWith("ليان"));
+async function seedStudent(nationalId) {
+  const students = (await call(`/api/students?q=${nationalId}`, { cookie: admin })).data.students;
+  const student = students.find((s) => s.nationalId === nationalId);
+  assert.ok(student, `الطالب التجريبي ${nationalId} غير موجود`);
+  return student;
+}
+const s1 = await seedStudent("400000101");
+const s2 = await seedStudent("400000102");
+const s3 = await seedStudent("400000103");
 const staff = (await call("/api/staff", { cookie: admin })).data.staff;
-const t1 = staff.find((s) => s.username === "gaza.teacher1");
+const t1 = staff.find((s) => s.username === "obai.teacher1");
 const circles = (await call("/api/circles", { cookie: admin })).data.circles;
 const fajr = circles.find((c) => c.name === "حلقة الفجر");
 
@@ -60,10 +66,25 @@ await test("الإعلان للطلاب يصل الطلاب فقط ولا يصل
   assert.ok(r.data.recipients >= 1, `المستلمون = ${r.data.recipients}`);
   assert.equal(await unread(student2), sBefore + 1);
   assert.equal(await unread(teacher), tBefore, "الكادر لا يستلم إعلان الطلاب");
-  assert.equal((await call("/api/announcements", { method: "POST", cookie: teacher, body: { title: "x", body: "yy", audience: "all" } })).status, 403);
+  assert.equal((await call("/api/announcements", { method: "POST", cookie: teacher, body: { title: "رسالة مخالفة", body: "نص كافٍ", audience: "all" } })).status, 403);
   const ann = (await call("/api/announcements", { cookie: teacher })).data.announcements;
   assert.ok(ann.length >= 1);
-  assert.equal((await call(`/api/announcements/${r.data.id}`, { method: "DELETE", cookie: secretary })).status, 200);
+  assert.equal((await call(`/api/announcements/${r.data.id}`, { method: "PATCH", cookie: teacher, body: { title: "عنوان جديد", body: "نص جديد" } })).status, 403, "المعلّم لا يعدّل رسالة الإدارة");
+  const edited = await call(`/api/announcements/${r.data.id}`, { method: "PATCH", cookie: secretary, body: { title: "إجازة الخميس", body: "الحلقات متوقفة يوم الخميس." } });
+  assert.equal(edited.status, 200);
+  assert.ok(edited.data.updatedNotifications >= 1);
+  assert.ok((await call("/api/notifications", { cookie: student2 })).data.items.some((n) => n.title === "إجازة الخميس" && n.body === "الحلقات متوقفة يوم الخميس."));
+  assert.equal((await call(`/api/announcements/${r.data.id}`, { method: "DELETE", cookie: teacher })).status, 403, "المعلّم لا يحذف رسالة الإدارة");
+  const removed = await call(`/api/announcements/${r.data.id}`, { method: "DELETE", cookie: secretary });
+  assert.equal(removed.status, 200);
+  assert.ok(removed.data.removedNotifications >= 1);
+  assert.equal(await unread(student2), sBefore, "حذف التعميم يسحب إشعاره من صندوق المستلم");
+  const own = await call("/api/announcements", { method: "POST", cookie: teacher, body: { title: "رسالة الحلقة للتجربة", body: "تُحذف من عند الأهالي.", audience: "students", scopeKind: "circle", scopeId: fajr.id } });
+  assert.equal(own.status, 201, JSON.stringify(own.data));
+  assert.ok(own.data.recipients >= 1);
+  assert.equal((await call(`/api/announcements/${own.data.id}`, { method: "PATCH", cookie: teacher, body: { title: "رسالة الحلقة المعدّلة", body: "الموعد المعدّل." } })).status, 200, "المعلّم يعدّل رسالته");
+  assert.equal((await call(`/api/announcements/${own.data.id}`, { method: "DELETE", cookie: teacher })).status, 200, "المعلّم يحذف رسالته");
+  assert.equal(await unread(student2), sBefore, "حذف المعلم يزيل إشعار أولياء حلقته");
 });
 
 await test("إبلاغ الغياب من ولي الأمر: يصل المعلّم ويظهر على لوحة اليوم", async () => {
@@ -114,12 +135,15 @@ await test("حضور الكادر: للإدارة فقط مع ملخص شهري"
 });
 
 await test("الملاحظات الداخلية: للكادر فقط وبحسب النطاق", async () => {
-  assert.equal((await call("/api/notes", { method: "POST", cookie: teacher, body: { studentId: s1.id, body: "يحتاج متابعة في الحضور" } })).status, 201);
+  const body = `يحتاج متابعة في الحضور ${Date.now()}`;
+  assert.equal((await call("/api/notes", { method: "POST", cookie: teacher, body: { studentId: s1.id, body } })).status, 201);
   assert.equal((await call("/api/notes", { method: "POST", cookie: teacher, body: { studentId: s3.id, body: "ملاحظة غير مسموحة" } })).status, 404);
   const list = (await call(`/api/notes?studentId=${s1.id}`, { cookie: admin })).data.notes;
-  assert.ok(list.some((n) => n.body.includes("متابعة")));
+  const note = list.find((n) => n.body === body);
+  assert.ok(note);
   assert.equal((await call(`/api/notes?studentId=${s1.id}`, { cookie: student })).status, 403, "الطالب لا يرى الملاحظات الداخلية");
-  assert.equal((await call(`/api/notes/${list[0].id}`, { method: "DELETE", cookie: teacher3 })).status, 403);
+  assert.equal((await call(`/api/notes/${note.id}`, { method: "DELETE", cookie: teacher3 })).status, 404);
+  assert.equal((await call(`/api/notes/${note.id}`, { method: "DELETE", cookie: teacher })).status, 200);
 });
 
 await test("لوحة الشرف: بموافقة الأهل فقط", async () => {
@@ -130,7 +154,7 @@ await test("لوحة الشرف: بموافقة الأهل فقط", async () => 
   const after = (await call("/api/honor", { cookie: student2 })).data;
   const rep = (await call(`/api/reports?month=${today.slice(0, 7)}&circleId=${fajr.id}`, { cookie: admin })).data.rows.find((r) => r.studentId === s1.id);
   if (rep && rep.pages > 0 && rep.planPages > 0) assert.ok(after.top.some((r) => r.name === s1.name), "المتفوّق الموافق يظهر");
-  assert.ok(after.top.every((r) => r.name !== students.find((s) => s.name.startsWith("ياسين")).name), "طالب بلا موافقة لا يظهر");
+  assert.ok(after.top.every((r) => r.name !== s2.name), "طالب بلا موافقة لا يظهر");
   await call("/api/honor/consent", { method: "POST", cookie: admin, body: { studentId: s1.id, consent: false } });
 });
 
@@ -152,6 +176,13 @@ await test("التصدير الكامل: للمدير فقط وبلا كلمات
   const text = JSON.stringify(r.data);
   assert.ok(!/password_hash|password_salt|"hash"/i.test(text), "لا تجزئة كلمات مرور في التصدير");
   assert.ok(r.data.students.length >= 3 && r.data.dailyRecords.length >= 1);
+  assert.ok(r.data.guardians?.length >= 2, "أولياء الأمور غير موجودين في التصدير");
+  assert.ok(r.data.prayerTimes?.length >= 1, "مواعيد الصلاة غير موجودة في التصدير");
+  assert.ok(r.data.stageManagers?.length >= 1, "تعيين مديري المراحل غير موجود في التصدير");
+  for (const section of ["courseStudents", "announcements", "notifications", "studentNotes", "auditLog"]) {
+    assert.ok(Array.isArray(r.data[section]), `${section} غير موجود في التصدير`);
+  }
+  assert.ok("logo" in r.data.center && "guardian_id" in r.data.students[0] && "phone_cc" in r.data.students[0], "حقول المركز والطلاب الأساسية ناقصة");
 });
 
 await test("صورة الطالب: تُرفع للكادر وتظهر في الملف فقط لا في القوائم", async () => {
@@ -161,7 +192,7 @@ await test("صورة الطالب: تُرفع للكادر وتظهر في ال�
   assert.equal((await call(`/api/students/${s1.id}/photo`, { method: "POST", cookie: teacher, body: { photo: "http://evil/x.png" } })).status, 400);
   assert.equal((await call(`/api/students/${s1.id}/photo`, { method: "POST", cookie: student, body: { photo: tiny } })).status, 403);
   assert.equal((await call(`/api/students/${s1.id}`, { cookie: admin })).data.student.photo, tiny);
-  const row = (await call("/api/students", { cookie: admin })).data.students.find((x) => x.id === s1.id);
+  const row = (await call(`/api/students?q=${s1.nationalId}`, { cookie: admin })).data.students.find((x) => x.id === s1.id);
   assert.equal(row.hasPhoto, true);
   assert.ok(!("photo" in row), "القوائم لا تحمل الصورة نفسها");
 });

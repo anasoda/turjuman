@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
 import type { Role } from "@shared/constants";
-import { useMe } from "../lib/session";
+import { useMe, useSession } from "../lib/session";
 import { Icons, useUi } from "./ui";
 import { clearFailures, getSyncState, subscribeSync, type SyncState } from "../lib/offline";
 import { api, flushNow } from "../lib/api";
+import { disablePush } from "../lib/push";
+import { getTheme, setTheme } from "../lib/theme";
 import { NOTIFICATIONS_EVENT } from "../pages/Notifications";
 import type { CenterInfo } from "../lib/types";
 
@@ -51,9 +53,9 @@ function SyncPill() {
     s.failures.forEach((f) => toast(`تعذّر إرسال سجل محفوظ: ${f}`, "err"));
     clearFailures();
   }, [s.failures, toast]);
-  const label = s.syncing ? "جارٍ الإرسال…" : !s.online ? (s.pending ? `دون إنترنت · ${s.pending} معلّق` : "دون إنترنت") : s.pending ? `${s.pending} بانتظار الإرسال` : "متصل";
+  const label = s.syncing ? "جارٍ المزامنة…" : s.rejected ? `${s.rejected} يحتاج مراجعة · ${s.pending} معلّق` : !s.online ? (s.pending ? `دون إنترنت · ${s.pending} معلّق` : "دون إنترنت") : s.pending ? `${s.pending} بانتظار الإرسال` : "متصل";
   return (
-    <button type="button" className={`sync-pill ${!s.online || s.pending ? "warn" : ""}`} onClick={() => void flushNow()} title={s.servedFromCache ? "تُعرض آخر بيانات محفوظة على الجهاز" : "اضغط لإرسال ما هو معلّق"}>
+    <button type="button" className={`sync-pill ${!s.online || s.pending || s.rejected ? "warn" : ""}`} onClick={() => void flushNow()} aria-label={label} title={s.rejected ? `${label} · راجع السجلات من صفحة المزيد` : s.servedFromCache ? `تُعرض آخر بيانات محفوظة على الجهاز · ${label}` : `${label} · اضغط لإرسال ما هو معلّق`}>
       {label}
     </button>
   );
@@ -80,13 +82,31 @@ function Bell() {
 
 /** الهيكل: شريط علوي بهوية المركز + تنقل سفلي (جوال) أو جانبي (شاشة عريضة). */
 export function Shell() {
+  const { confirm } = useUi();
   const { center, user } = useMe();
+  const { logout } = useSession();
+  const [theme, setThemeState] = useState(getTheme());
+
+  const toggleTheme = () => {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    setThemeState(next);
+  };
+
   return (
     <div className="shell">
       <header className="topbar">
         <Brand center={center} />
-        <SyncPill />
-        <Bell />
+        <div className="topbar-actions">
+          <button type="button" className="icon-btn" onClick={toggleTheme} aria-label="تبديل الوضع الليلي/النهاري" style={{ background: "transparent", border: "none", color: "inherit", cursor: "pointer", padding: "8px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ width: 22, height: 22, display: "inline-block" }}>{theme === "dark" ? Icons.sun : Icons.moon}</span>
+          </button>
+          <SyncPill />
+          <Bell />
+          <button type="button" className="icon-btn" onClick={async () => { if (await confirm({ title: "تسجيل الخروج", message: "هل أنت متأكد من الخروج؟", confirmLabel: "خروج", danger: true })) { await disablePush().catch(() => undefined); void logout(); } }} aria-label="تسجيل الخروج" style={{ background: "transparent", border: "none", color: "inherit", cursor: "pointer", padding: "8px", display: "flex", alignItems: "center", justifyContent: "center", marginInlineStart: "4px" }}>
+            <span style={{ width: 22, height: 22, display: "inline-block" }}>{Icons.login}</span>
+          </button>
+        </div>
       </header>
       <Outlet />
       <nav className="bottom-nav" aria-label="التنقل الرئيسي">

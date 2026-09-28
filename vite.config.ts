@@ -25,9 +25,13 @@ export default defineConfig({
           { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }
         ]
       },
-      workbox: { navigateFallbackDenylist: [/^\/api\//] }
+      workbox: {
+        navigateFallbackDenylist: [/^\/api\//],
+        importScripts: ["/push-sw.js"],
+        globPatterns: ["**/*.{js,css,html,png,webp,woff,woff2,webmanifest}"]
+      }
     })
   ],
-  server: { port: 5173, proxy: { "/api": "http://127.0.0.1:8787" } },
+  server: { host: true, port: 5173, proxy: { "/api": "http://127.0.0.1:8787" } },
   test: { include: ["tests/**/*.test.ts"] }
 });

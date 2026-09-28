@@ -20,20 +20,25 @@ async function test(name, fn) {
   try { await fn(); passed++; console.log("✓", name); } catch (e) { console.error("✗", name, "\n   ", e.message); process.exitCode = 1; }
 }
 
-const G = "tarjuman-gaza-01", R = "tarjuman-rafah-02";
+const G = "obai-01", R = "test-center-02";
 const admin = await session(G, "admin");
-const teacher = await session(G, "gaza.teacher1");
-const teacher3 = await session(G, "gaza.teacher3");
+const teacher = await session(G, "obai.teacher1");
+const teacher3 = await session(G, "obai.teacher3");
 const wali = await session(G, "801000001", "801000001");
-const committee = await session(G, "gaza.committee");
-const secretary = await session(G, "gaza.secretary");
+const committee = await session(G, "obai.committee");
+const secretary = await session(G, "obai.secretary");
 
 const circles = (await call("/api/circles", { cookie: admin })).data.circles;
 const fajr = circles.find((c) => c.name === "حلقة الفجر");
 const noor = circles.find((c) => c.name === "حلقة النور");
-const studentsAll = (await call("/api/students", { cookie: admin })).data.students;
-const s1 = studentsAll.find((s) => s.name.startsWith("عمر"));
-const s3 = studentsAll.find((s) => s.name.startsWith("ليان"));
+async function seedStudent(nationalId) {
+  const students = (await call(`/api/students?q=${nationalId}`, { cookie: admin })).data.students;
+  const student = students.find((s) => s.nationalId === nationalId);
+  assert.ok(student, `الطالب التجريبي ${nationalId} غير موجود`);
+  return student;
+}
+const s1 = await seedStudent("400000101");
+const s3 = await seedStudent("400000103");
 
 await test("رسالة الدخول تكشف موضع الخطأ", async () => {
   assert.equal((await login(G, "nobody")).data.error, "اسم المستخدم غير موجود");
@@ -77,17 +82,17 @@ await test("لا كلمات مرور تُعرَض في أي رد", async () => {
   assert.ok(!/password|hash|salt/i.test(staffList.replace(/accountActive/g, "")), "لا كلمات مرور في قائمة الكادر");
 });
 await test("عزل المراكز: مدير مركز لا يصل لبيانات مركز آخر", async () => {
-  const rafahAdmin = await session(R, "admin");
-  const rafahStudents = (await call("/api/students", { cookie: rafahAdmin })).data.students;
-  assert.ok(rafahStudents.length >= 1);
-  assert.equal((await call(`/api/students/${rafahStudents[0].id}`, { cookie: admin })).status, 404);
-  assert.equal((await call(`/api/students/${s1.id}`, { cookie: rafahAdmin })).status, 404);
-  assert.equal((await login(R, "gaza.teacher1")).status, 401, "حساب مركز لا يدخل مركزاً آخر");
+  const otherAdmin = await session(R, "admin");
+  const otherStudents = (await call("/api/students", { cookie: otherAdmin })).data.students;
+  assert.ok(otherStudents.length >= 1);
+  assert.equal((await call(`/api/students/${otherStudents[0].id}`, { cookie: admin })).status, 404);
+  assert.equal((await call(`/api/students/${s1.id}`, { cookie: otherAdmin })).status, 404);
+  assert.equal((await login(R, "obai.teacher1")).status, 401, "حساب مركز لا يدخل مركزاً آخر");
 });
 await test("المعلّم قد يدرّس أكثر من حلقة (0009)، وفئة المعلّم تطابق الحلقة", async () => {
   const teachers = (await call("/api/staff", { cookie: admin })).data.staff.filter((t) => t.role === "teacher");
-  const t1 = teachers.find((t) => t.username === "gaza.teacher1");
-  const t3 = teachers.find((t) => t.username === "gaza.teacher3");
+  const t1 = teachers.find((t) => t.username === "obai.teacher1");
+  const t3 = teachers.find((t) => t.username === "obai.teacher3");
   const tag = Date.now().toString().slice(-7); // اسم فريد: الاختبار يُنظِّف نفسه فيبقى قابلاً للإعادة
   const r1 = await call("/api/circles", { method: "POST", cookie: admin, body: { name: `حلقة إضافية ${tag}`, category: "male", levelKey: "primary", active: true, primaryTeacherId: t1.id, assistantTeacherId: null } });
   assert.equal(r1.status, 201, `معلّم بحلقة إضافية يجب أن يُقبل: ${JSON.stringify(r1.data)}`);
@@ -101,7 +106,7 @@ await test("منع طالب في حلقة فئتها مخالفة، وحلقة �
 });
 await test("الأرشفة بدل الحذف: يظهر في الأرشيف مع سببه ويُسترجع", async () => {
   assert.equal((await call(`/api/students/${s1.id}/archive`, { method: "POST", cookie: admin, body: { reason: "انتقل إلى مدينة أخرى" } })).status, 200);
-  const archived = (await call("/api/students?archived=1", { cookie: admin })).data.students;
+  const archived = (await call(`/api/students?archived=1&q=${s1.nationalId}`, { cookie: admin })).data.students;
   assert.ok(archived.some((s) => s.id === s1.id && s.archiveReason));
   assert.equal((await call(`/api/students/${s1.id}/restore`, { method: "POST", cookie: admin })).status, 200);
 });
@@ -112,10 +117,15 @@ await test("لجنة الاختبار ترى الطلاب لكن لا تعدّل
   assert.ok((await call("/api/students", { cookie: committee })).data.students.length >= 3);
   assert.equal((await call(`/api/students/${s1.id}`, { method: "PATCH", cookie: committee, body: { name: "اسم جديد رباعي كامل" } })).status, 403);
 });
-await test("السكرتير لا يدير حسابات السكرتارية ولا الإعدادات", async () => {
+await test("السكرتير لا يرى أو يدير حسابات السكرتارية ومديري المراحل ولا يعدّل الإعدادات", async () => {
+  const adminStaff = (await call("/api/staff", { cookie: admin })).data.staff;
+  const sec = adminStaff.find((s) => s.role === "secretary");
+  const stageManager = adminStaff.find((s) => s.role === "stage_manager");
+  assert.ok(sec && stageManager, "الحسابات اللازمة لاختبار الصلاحيات غير موجودة");
   const staff = (await call("/api/staff", { cookie: secretary })).data.staff;
-  const sec = staff.find((s) => s.role === "secretary");
+  assert.ok(staff.every((s) => s.role !== "secretary" && s.role !== "stage_manager"), "ظهرت حسابات محجوبة في قائمة السكرتير");
   assert.equal((await call(`/api/staff/${sec.id}/password`, { method: "POST", cookie: secretary, body: { password: "Another@2026" } })).status, 404);
+  assert.equal((await call(`/api/staff/${stageManager.id}/password`, { method: "POST", cookie: secretary, body: { password: "Another@2026" } })).status, 404);
   const settings = (await call("/api/settings", { cookie: secretary })).data.settings;
   assert.equal((await call("/api/settings", { method: "PUT", cookie: secretary, body: settings })).status, 403);
 });
@@ -133,12 +143,12 @@ await test("الإحصاءات العامة تعمل دون تسجيل دخول"
   assert.equal((await call("/api/public/stats?centerId=nope")).status, 404);
 });
 await test("تغيير كلمة المرور الذاتي", async () => {
-  const c = await session(G, "gaza.secretary");
+  const c = await session(G, "obai.secretary");
   assert.equal((await call("/api/auth/change-password", { method: "POST", cookie: c, body: { oldPassword: "wrong", newPassword: "Newer@2026pw" } })).status, 401);
   const ok = await call("/api/auth/change-password", { method: "POST", cookie: c, body: { oldPassword: PASSWORD, newPassword: "Newer@2026pw" } });
   assert.equal(ok.status, 200);
-  assert.equal((await login(G, "gaza.secretary", "Newer@2026pw")).status, 200);
-  const c2 = (await login(G, "gaza.secretary", "Newer@2026pw")).cookie;
+  assert.equal((await login(G, "obai.secretary", "Newer@2026pw")).status, 200);
+  const c2 = (await login(G, "obai.secretary", "Newer@2026pw")).cookie;
   await call("/api/auth/change-password", { method: "POST", cookie: c2, body: { oldPassword: "Newer@2026pw", newPassword: PASSWORD } });
 });
 await test("سجل التعديلات للمدير فقط ويسجّل العمليات", async () => {

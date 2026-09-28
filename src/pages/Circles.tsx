@@ -10,10 +10,11 @@ import { ScheduleEditor } from "./ScheduleAbsence";
 /** الحلقات: بالاسم فقط (بلا رمز). لكل معلّم حلقة واحدة، وللحلقة أساسي ومساعد اختياري. */
 export function Circles() {
   const { settings, user } = useMe();
-  // مدير المرحلة يقرأ حلقات مراحله فقط؛ الإنشاء والتعديل والتعطيل للإدارة (§15.3)
+  // مدير المرحلة يقرأ فقط؛ المعلم يعدّل حلقاته المسندة إليه، والإدارة تدير كل الحلقات.
   const readOnly = user.role === "stage_manager";
+  const teacher = user.role === "teacher";
   const circles = useFetch<{ circles: Circle[] }>("/api/circles");
-  const staff = useFetch<{ staff: Staff[] }>(readOnly ? null : "/api/staff");
+  const staff = useFetch<{ staff: Staff[] }>(readOnly || teacher ? null : "/api/staff");
   const wantsNew = useWantsNew();
   const { run } = useAction();
   const [form, setForm] = useState<Circle | "new" | null>(wantsNew ? "new" : null);
@@ -42,22 +43,22 @@ export function Circles() {
           </button>
           <div className="actions">
             {!readOnly && <button className="btn ghost small" type="button" onClick={() => setSchedule(c)}>جدول الحلقة</button>}
-            {!readOnly && <button className={`btn ghost small ${c.active ? "danger" : ""}`} type="button" onClick={() => void toggle(c)}>{c.active ? "تعطيل" : "تفعيل"}</button>}
+            {!readOnly && !teacher && <button className={`btn ghost small ${c.active ? "danger" : ""}`} type="button" onClick={() => void toggle(c)}>{c.active ? "تعطيل" : "تفعيل"}</button>}
           </div>
           </div>
         ))}
         {circles.data && !circles.data.circles.length && <div className="empty">لا توجد حلقات بعد. أضف أول حلقة.</div>}
       </div>
-      {!readOnly && <button className="fab" type="button" onClick={() => setForm("new")}>{Icons.plus}إضافة حلقة</button>}
+      {!readOnly && !teacher && <button className="fab" type="button" onClick={() => setForm("new")}>{Icons.plus}إضافة حلقة</button>}
       {schedule && <ScheduleEditor circleId={schedule.id} circleName={schedule.name} onClose={() => setSchedule(null)} />}
-      {form && staff.data && (
-        <CircleForm circle={form === "new" ? null : form} teachers={staff.data.staff.filter((s) => s.role === "teacher")} onClose={() => setForm(null)} onSaved={() => { setForm(null); void circles.reload(); void staff.reload(); }} />
+      {form && (staff.data || teacher) && (
+        <CircleForm circle={form === "new" ? null : form} teachers={staff.data?.staff.filter((s) => s.role === "teacher" || s.role === "stage_manager") ?? []} teacherEditable={!teacher} onClose={() => setForm(null)} onSaved={() => { setForm(null); void circles.reload(); void staff.reload(); }} />
       )}
     </main>
   );
 }
 
-function CircleForm({ circle, teachers, onClose, onSaved }: { circle: Circle | null; teachers: Staff[]; onClose: () => void; onSaved: () => void }) {
+function CircleForm({ circle, teachers, teacherEditable, onClose, onSaved }: { circle: Circle | null; teachers: Staff[]; teacherEditable: boolean; onClose: () => void; onSaved: () => void }) {
   const { settings } = useMe();
   const { busy, run } = useAction();
   const { confirm } = useUi();
@@ -65,7 +66,7 @@ function CircleForm({ circle, teachers, onClose, onSaved }: { circle: Circle | n
   const [primary, setPrimary] = useState(circle?.primaryTeacherId ?? "");
   const [assistant, setAssistant] = useState(circle?.assistantTeacherId ?? "");
 
-  // المعلّم المتاح: فعّال ومن جنس الفئة. قيد «حلقة واحدة» رُفع في هجرة 0009 (§15.5).
+  // المعلّم المتاح: فعّال ومن جنس الفئة، ويشمل مدير المرحلة (تعيين فوق حساب المعلّم، §15.10). قيد «حلقة واحدة» رُفع في هجرة 0009 (§15.5).
   const available = teachers.filter((t) => t.active && t.gender === category);
 
   const submit = async (e: FormEvent<HTMLFormElement>) => {
@@ -82,7 +83,7 @@ function CircleForm({ circle, teachers, onClose, onSaved }: { circle: Circle | n
       ? `في الحلقة ${busyCount} طالباً. انقلهم أولاً، أو عطّل الحلقة بدل حذفها.`
       : "الحلقة فارغة، وسيُحذف جدولها وإسناد معلّميها. لا يمكن التراجع.";
     if (!(await confirm({ title: `حذف ${circle.name}؟`, message, confirmLabel: busyCount > 0 ? "حاول الحذف" : "حذف", danger: true }))) return;
-    if (await run(() => api(`/api/circles/${circle.id}`, { method: "DELETE" }), "تم حذف الحلقة")) onSaved();
+    if (await confirm({ title: "تأكيد الحذف", message: "هل أنت متأكد؟ لا يمكن التراجع.", confirmLabel: "حذف", danger: true }) && await run(() => api(`/api/circles/${circle.id}`, { method: "DELETE" }), "حذف")) onSaved();
   };
 
   return (
@@ -101,18 +102,18 @@ function CircleForm({ circle, teachers, onClose, onSaved }: { circle: Circle | n
             </select>
           </Field>
         </div>
-        <Field label="المعلّم الأساسي" hint={category === "male" ? "المعلمون الفعّالون من فئة الحلقة" : "المعلمات الفعّالات من فئة الحلقة"}>
+        {teacherEditable && <Field label="المعلّم الأساسي" hint={category === "male" ? "المعلمون الفعّالون من فئة الحلقة" : "المعلمات الفعّالات من فئة الحلقة"}>
           <select value={primary} onChange={(e) => setPrimary(e.target.value)}>
             <option value="">بلا معلّم</option>
-            {available.filter((t) => t.id !== assistant).map((t) => <option key={t.id} value={t.id}>{t.displayName}</option>)}
+            {available.filter((t) => t.id !== assistant).map((t) => <option key={t.id} value={t.id}>{t.displayName}{t.role === "stage_manager" ? " (مدير مرحلة)" : ""}</option>)}
           </select>
-        </Field>
-        <Field label="المعلّم المساعد (اختياري)">
+        </Field>}
+        {teacherEditable && <Field label="المعلّم المساعد (اختياري)">
           <select value={assistant} onChange={(e) => setAssistant(e.target.value)} disabled={!primary}>
             <option value="">بلا مساعد</option>
-            {available.filter((t) => t.id !== primary).map((t) => <option key={t.id} value={t.id}>{t.displayName}</option>)}
+            {available.filter((t) => t.id !== primary).map((t) => <option key={t.id} value={t.id}>{t.displayName}{t.role === "stage_manager" ? " (مدير مرحلة)" : ""}</option>)}
           </select>
-        </Field>
+        </Field>}
         <label className="radio-row"><span style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" name="active" defaultChecked={circle?.active ?? true} style={{ width: 18, height: 18 }} />الحلقة فعّالة</span></label>
         <div className="actions">
           <button className="btn" disabled={busy}>{circle ? "حفظ" : "إضافة"}</button>

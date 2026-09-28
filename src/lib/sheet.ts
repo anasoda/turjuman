@@ -1,7 +1,7 @@
 // قراءة ملف Excel (xlsx) أو CSV في المتصفح بلا مكتبات خارجية، وتحويله إلى صفوف طلاب للاستيراد.
 // xlsx = ملف zip؛ نفكّه بـ DecompressionStream ونقرأ الورقة الأولى + النصوص المشتركة بتحليل نصي بسيط.
 
-import { AJKAM_COURSES, type Direction, type Gender } from "@shared/constants";
+import { AJKAM_COURSES, WA_PREFIXES, type Direction, type Gender } from "@shared/constants";
 import { SURAHS } from "@shared/quran-data";
 import { latinDigits } from "@shared/phone";
 
@@ -166,7 +166,7 @@ export const FIELDS: Array<{ key: FieldKey; label: string; aliases: string[] }> 
   { key: "guardianRelation", label: "صلة القرابة", aliases: ["صله القرابه", "الصله", "صفه ولي الامر", "القرابه", "relation"] },
   { key: "guardianCallPhone", label: "رقم الاتصال (ولي الأمر)", aliases: ["رقم الاتصال", "جوال الاتصال", "جوال ولي الامر", "هاتف ولي الامر", "رقم ولي الامر", "جوال الاب", "جوال الام", "جوال الاهل"] },
   { key: "guardianWaCc", label: "مقدمة الواتساب", aliases: ["مقدمه الواتس", "مقدمه الواتساب", "مقدمه", "cc", "الدوله", "country"] },
-  { key: "guardianWaNational", label: "رقم الواتساب (ولي الأمر)", aliases: ["رقم الواتس", "رقم الواتساب", "واتساب", "الواتس", "whatsapp", "جوال الواتس"] },
+  { key: "guardianWaNational", label: "رقم الواتساب (ولي الأمر)", aliases: ["رقم الواتس", "رقم الواتساب", "واتساب", "الواتس", "whatsapp", "جوال الواتس", "جوال ولي الأمر (واتساب)"] },
   { key: "guardianNationalId", label: "رقم هوية ولي الأمر", aliases: ["هوية ولي الامر", "رقم هويه ولي الامر", "رقم هويه الاب", "رقم هويه الام", "guardianid"] },
   { key: "direction", label: "اتجاه الحفظ", aliases: ["اتجاه الحفظ", "الاتجاه", "direction"] },
   { key: "lastSurah", label: "آخر سورة", aliases: ["اخر سوره", "السوره", "سوره", "surah"] },
@@ -217,7 +217,7 @@ export function toIsoDate(raw: string): string {
   if (!v) return "";
   const iso = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/.exec(v);
   if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
-  const dmy = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/.exec(v);
+  const dmy = /^(\d{1,2})[\s\-/.]+(\d{1,2})[\s\-/.]+(\d{4})$/.exec(v);
   if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
   const serial = Number(v);
   if (Number.isFinite(serial) && serial > 0 && serial < 80000) {
@@ -251,7 +251,7 @@ export interface ImportStudent {
   phoneCc: string;
   phoneNational: string;
   guardianName: string;
-  guardianRelation: "father" | "mother" | "other";
+  guardianRelation: import("@shared/constants").GuardianRelation;
   guardianCallPhone: string;
   guardianWaCc: string;
   guardianWaNational: string;
@@ -272,11 +272,18 @@ export interface BuiltRow {
   problem: string;
 }
 
+/** مقدمة الدولة من خلية الملف: أرقام فقط، و«00972»/«+972» تصير «972». الفراغ يعني الافتراضي. */
+function ccOf(raw: string, fallback: string): string {
+  const digits = latinDigits(raw).replace(/[^\d]/g, "").replace(/^00/, "");
+  return digits || fallback;
+}
+const okPrefix = (cc: string): boolean => !cc || (WA_PREFIXES as readonly string[]).includes(cc);
+
 /** يبني صفوف الاستيراد من خلايا الملف وفق الربط المختار. */
 export function buildImportRows(
   rows: string[][],
   mapping: Array<FieldKey | "">,
-  opts: { header: boolean; defaultDirection: Direction; defaultPlan: number }
+  opts: { header: boolean; defaultDirection: Direction; defaultPlan: number; tempIds?: boolean; requireGender?: boolean }
 ): BuiltRow[] {
   const body = opts.header ? rows.slice(1) : rows;
   const offset = opts.header ? 2 : 1;
@@ -295,18 +302,28 @@ export function buildImportRows(
     const planned = num(get("monthlyPlanPages"));
     const course = get("ajkamCourse").trim();
     const relRaw = norm(get("guardianRelation"));
-    const guardianRelation: "father" | "mother" | "other" = /^(ام|الام|mother|m|والده|والدة)$/.test(relRaw) ? "mother" : /^(اخر|اخري|other|o|اخو|اخت|جد|جده)$/.test(relRaw) ? "other" : "father";
+    const guardianRelation: import("@shared/constants").GuardianRelation = /^(اب|الاب|father|dad|والد)$/.test(relRaw) ? "father"
+      : /^(ام|الام|mother|mom|والده|والدة)$/.test(relRaw) ? "mother"
+      : /^(جد|الجد|جدي|grandfather)$/.test(relRaw) ? "grandfather"
+      : /^(جدة|الجدة|جدتي|grandmother)$/.test(relRaw) ? "grandmother"
+      : /^(عم|العم|paternal uncle)$/.test(relRaw) ? "paternal_uncle"
+      : /^(عمه|العمة|paternal aunt)$/.test(relRaw) ? "paternal_aunt"
+      : /^(خال|الخال|maternal uncle)$/.test(relRaw) ? "maternal_uncle"
+      : /^(خاله|الخالة|maternal aunt)$/.test(relRaw) ? "maternal_aunt"
+      : /^(اخ|الاخ|اخو|brother)$/.test(relRaw) ? "brother"
+      : /^(اخت|الاخت|sister)$/.test(relRaw) ? "sister"
+      : "other";
     const student: ImportStudent = {
       name,
       nationalId: latinDigits(get("nationalId")).replace(/[^\dA-Za-z-]/g, ""),
       birth: toIsoDate(get("birth")),
       gender: toGender(get("gender")),
-      phoneCc: latinDigits(get("phoneCc")).replace(/[^\d]/g, "") || "",
+      phoneCc: ccOf(get("phoneCc"), ""),
       phoneNational: latinDigits(get("phoneNational")).replace(/[^\d]/g, ""),
       guardianName: get("guardianName").replace(/\s+/g, " ").trim(),
       guardianRelation,
       guardianCallPhone: latinDigits(get("guardianCallPhone")).replace(/[^\d]/g, ""),
-      guardianWaCc: latinDigits(get("guardianWaCc")).replace(/[^\d]/g, "") || "970",
+      guardianWaCc: ccOf(get("guardianWaCc"), "970"),
       // إن غاب عمود الواتساب يُعتمد رقم الاتصال (كثيراً ما يكونان واحداً)
       guardianWaNational: latinDigits(get("guardianWaNational")).replace(/[^\d]/g, "") || latinDigits(get("guardianCallPhone")).replace(/[^\d]/g, ""),
       guardianNationalId: latinDigits(get("guardianNationalId")).replace(/[^\dA-Za-z-]/g, ""),
@@ -321,23 +338,28 @@ export function buildImportRows(
     if (!student.guardianCallPhone) student.guardianCallPhone = student.guardianWaNational;
     // الشروط نفسها التي يفرضها الخادم (نموذج «إضافة طالب»): الاسم الرباعي، الميلاد، ووليّ الأمر كاملاً
     const problem = name.length < 8 ? "الاسم مفقود أو أقل من 8 أحرف (الاسم الرباعي)"
+      : opts.tempIds === false && !student.nationalId ? "رقم الهوية مطلوب، أو فعّل توليد رقم مؤقت"
+      : student.nationalId && !/^\d{9}$/.test(student.nationalId) ? "رقم الهوية يجب أن يكون 9 أرقام"
       : !/^\d{4}-\d{2}-\d{2}$/.test(student.birth) ? "تاريخ الميلاد مفقود أو غير صالح"
+      : opts.requireGender && !student.gender ? "الجنس مطلوب عند الاستيراد بلا حلقة"
       : student.guardianName.length < 3 ? "اسم ولي الأمر مطلوب"
       : student.guardianWaNational.length < 7 ? "رقم واتساب ولي الأمر (أو اتصاله) مطلوب، 7 خانات على الأقل"
+      : !okPrefix(student.guardianWaCc) || !okPrefix(student.phoneCc) ? "مقدمة الواتساب المسموحة 970 أو 972 فقط"
       : "";
     out.push({ line: i + offset, student, problem });
   });
   return out;
 }
 
-/** نموذج CSV (يُفتح في Excel مباشرة) بعناوين الأعمدة المتوقَّعة. */
+/** بيانات هوية الطالب وتواصله وولي أمره؛ لا تُدرج حقول المتابعة في النموذج الجاهز. */
+const TEMPLATE_KEYS: FieldKey[] = [
+  "name", "nationalId", "birth", "gender", "phoneCc", "phoneNational",
+  "guardianName", "guardianRelation", "guardianNationalId", "guardianCallPhone", "guardianWaCc", "guardianWaNational"
+];
+
+export const templateHeaders = (): string[] => TEMPLATE_KEYS.map((key) => FIELDS.find((f) => f.key === key)!.label);
+
+/** صيغة CSV بديلة لمن يحتاجها؛ النموذج الافتراضي في الواجهة بصيغة xlsx. */
 export function templateCsv(): string {
-  const head = FIELDS.map((f) => f.label).join(",");
-  const sample = FIELDS.map((f) => ({
-    name: "محمد أحمد سعيد عبد الله", nationalId: "401234567", birth: "2012-05-14", gender: "ذكر",
-    phoneCc: "970", phoneNational: "", guardianName: "أحمد سعيد عبد الله", guardianRelation: "أب",
-    guardianCallPhone: "0599876543", guardianWaCc: "970", guardianWaNational: "0599876543", guardianNationalId: "801234567",
-    direction: "من الناس إلى الفاتحة", lastSurah: "الناس", lastAyah: "6", monthlyPlanPages: "10", ajkamCourse: "", joinedAt: "2026-09-01"
-  } as Record<string, string>)[f.key] ?? "").join(",");
-  return `\uFEFF${head}\n${sample}\n`;
+  return `\uFEFF${templateHeaders().join(",")}\n`;
 }

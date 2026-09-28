@@ -1,11 +1,13 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import { AJKAM_COURSES, NATIONAL_ID_RE } from "../../shared/constants";
+import { AJKAM_COURSES, GUARDIAN_RELATIONS, NATIONAL_ID_RE, PHONE_RE, WA_PREFIXES, type GuardianRelation } from "../../shared/constants";
 import type { AppEnv } from "../env";
 import { requireAuth } from "../lib/auth";
 import { createPasswordRecord, newId } from "../lib/crypto";
 import { audit, fail, loadSettings, parseBody } from "../lib/util";
 import { partsOf } from "../lib/parts";
+import { todayHebron } from "../lib/dates";
+import { planTransfer } from "../lib/transfers";
 import { assertStageCircle, stageCircleSql, stagesOf, teacherCircleIds } from "../lib/access";
 import { findOrCreateGuardian, guardianFields } from "./guardians";
 
@@ -19,16 +21,18 @@ const studentFields = {
   /** اختيارية (§15.7): يُسجَّل الطالب قبل توزيعه على حلقة */
   circleId: z.string().nullable().default(null),
   direction: z.enum(["descending", "ascending"]).default("descending"),
+  guardianRelation: z.enum(GUARDIAN_RELATIONS).default("father"),
   /** يُتجاهل: المحفوظ يُحسب من آخر موضع (lib/parts). يبقى اختيارياً لتوافق العملاء القدامى. */
   memorizedParts: z.number().int().min(0).max(30).optional(),
   lastSurah: z.number().int().min(1).max(114).optional(),
   lastAyah: z.number().int().min(0).max(286).default(0),
   ajkamCourse: z.enum(AJKAM_COURSES).or(z.literal("")).default(""),
   monthlyPlanPages: z.number().int().min(0).max(604).default(0),
+  monthlyReviewPlanPages: z.number().int().min(0).max(604).default(0),
   joinedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
   // أرقام تواصل الطالب (مقدمة الدولة + الوطني)
-  phoneCc: z.string().trim().max(4).default("970"),
-  phoneNational: z.string().trim().max(20).default("")
+  phoneCc: z.enum(WA_PREFIXES, { errorMap: () => ({ message: "المقدمة المسموحة 970 أو 972 فقط" }) }).default("970"),
+  phoneNational: z.string().regex(PHONE_RE, "الرقم يجب أن يبدأ بـ 059 أو 056 ويتكون من 10 أرقام").or(z.literal("")).default("")
 };
 
 // حساب الطالب الخاص أُلغي كلياً (§14.1). بيانات ولي الأمر إجبارية مع كل طالب (§15.7):
@@ -40,16 +44,18 @@ const createSchema = z.object({
 }).refine((b) => !!b.guardianId || !!b.guardian, { message: "بيانات ولي الأمر مطلوبة: اختر ولياً موجوداً أو أضف جديداً", path: ["guardian"] });
 
 // المعلّم يعدّل فقط ما يخص المتابعة اليومية؛ الإداريون يعدّلون كل شيء
-const TEACHER_EDITABLE = ["direction", "memorizedParts", "lastSurah", "lastAyah", "ajkamCourse", "monthlyPlanPages"] as const;
+const TEACHER_EDITABLE = ["direction", "memorizedParts", "lastSurah", "lastAyah", "ajkamCourse", "monthlyPlanPages", "monthlyReviewPlanPages"] as const;
 const updateSchema = z.object(studentFields).partial();
 const archiveSchema = z.object({ reason: z.string().trim().min(2, "اكتب سبب الأرشفة").max(200) });
-const moveSchema = z.object({ circleId: z.string().min(1) });
+const moveSchema = z.object({ circleId: z.string().min(1), reason: z.string().trim().max(200).default("") });
 
 const SELECT_STUDENTS = `
   SELECT s.id, s.user_id AS userId, s.national_id AS nationalId, s.name, s.birth, s.gender, s.circle_id AS circleId,
          c.name AS circleName, s.direction, s.memorized_parts AS memorizedParts, s.last_surah AS lastSurah,
-         s.last_ayah AS lastAyah, s.ajkam_course AS ajkamCourse, s.monthly_plan_pages AS monthlyPlanPages,
-         s.phone_cc AS phoneCc, s.phone_national AS phoneNational, s.guardian_id AS guardianId,
+         s.last_ayah AS lastAyah, s.ajkam_course AS ajkamCourse, s.monthly_plan_pages AS monthlyPlanPages, s.monthly_review_plan_pages AS monthlyReviewPlanPages,
+         s.phone_cc AS phoneCc, s.phone_national AS phoneNational, s.guardian_id AS guardianId, COALESCE(NULLIF(s.guardian_relation_detail, ''), s.guardian_relation) AS guardianRelation,
+         (SELECT d.review_to_surah FROM daily_records d WHERE d.student_id = s.id AND d.review_to_surah IS NOT NULL ORDER BY d.date DESC LIMIT 1) AS reviewSurah,
+         (SELECT d.review_to_ayah FROM daily_records d WHERE d.student_id = s.id AND d.review_to_surah IS NOT NULL ORDER BY d.date DESC LIMIT 1) AS reviewAyah,
          (s.photo <> '') AS hasPhoto, s.honor_consent AS honorConsent, s.joined_at AS joinedAt, s.archived_at AS archivedAt, s.archive_reason AS archiveReason,
          u.username, u.active AS accountActive
     FROM students s
@@ -60,6 +66,10 @@ type StudentRow = Record<string, unknown> & { id: string; circleId: string | nul
 
 const shape = (r: Record<string, unknown>) => ({ ...r, memorizedParts: partsOf(r as { direction: string; lastSurah: number; lastAyah: number }), accountActive: r.accountActive === 1, hasPhoto: r.hasPhoto === 1, honorConsent: r.honorConsent === 1 });
 
+function relationBucket(relation: GuardianRelation): "father" | "mother" | "other" {
+  return relation === "father" ? "father" : relation === "mother" ? "mother" : "other";
+}
+
 async function photoOf(c: Context<AppEnv>, studentId: string): Promise<string> {
   const r = await c.env.DB.prepare("SELECT photo FROM students WHERE id = ?").bind(studentId).first<{ photo: string }>();
   return r?.photo ?? "";
@@ -68,7 +78,7 @@ async function photoOf(c: Context<AppEnv>, studentId: string): Promise<string> {
 /** أولياء أمر الطالب (أصحاب الحسابات المرتبطة به). */
 async function guardiansOf(c: Context<AppEnv>, studentId: string) {
   const { results } = await c.env.DB.prepare(
-    `SELECT g.id, g.user_id AS userId, g.name, g.relation, g.national_id AS nationalId,
+    `SELECT g.id, g.user_id AS userId, g.name, COALESCE(NULLIF(s.guardian_relation_detail, ''), s.guardian_relation) AS relation, g.national_id AS nationalId,
             g.call_phone AS callPhone, g.wa_cc AS waCc, g.wa_national AS waNational,
             u.username, u.active
        FROM students s JOIN guardians g ON g.id = s.guardian_id
@@ -168,7 +178,7 @@ const importRow = z.object({
   phoneCc: z.string().trim().max(4).default("970"),
   phoneNational: z.string().trim().max(20).default(""),
   guardianName: z.string().trim().max(100).default(""),
-  guardianRelation: z.enum(["father", "mother", "other"]).default("father"),
+  guardianRelation: z.enum(GUARDIAN_RELATIONS).default("father"),
   /** رقم الاتصال المحلي (§15.2) */
   guardianCallPhone: z.string().trim().max(20).default(""),
   guardianWaCc: z.string().trim().max(4).default("970"),
@@ -287,8 +297,23 @@ studentRoutes.post("/import", requireAuth("admin", "secretary", "teacher", "stag
     const gCc = r.guardianWaCc || "970";
     const gWa = r.guardianWaNational;
     const phoneKey = gWa ? `${gCc}|${gWa}` : "";
-    if (r.guardianName.length < 3 || r.guardianCallPhone.length < 7 || gWa.length < 7) {
-      push("error", "بيانات ولي الأمر ناقصة (الاسم + رقم الاتصال + رقم الواتساب، 7 خانات على الأقل)"); continue;
+    if (r.guardianName.length < 3) {
+      push("error", "بيانات ولي الأمر ناقصة (الاسم 3 أحرف على الأقل)"); continue;
+    }
+    if (!PHONE_RE.test(r.guardianCallPhone)) {
+      push("error", "رقم اتصال ولي الأمر يجب أن يبدأ بـ 059 أو 056 ويتكون من 10 أرقام"); continue;
+    }
+    if (!(WA_PREFIXES as readonly string[]).includes(gCc)) {
+      push("error", "مقدمة الواتساب المسموحة 970 أو 972 فقط"); continue;
+    }
+    if (!PHONE_RE.test(gWa)) {
+      push("error", "رقم واتساب ولي الأمر يجب أن يبدأ بـ 059 أو 056 ويتكون من 10 أرقام"); continue;
+    }
+    if (r.phoneNational && !(WA_PREFIXES as readonly string[]).includes(r.phoneCc || "970")) {
+      push("error", "مقدمة جوال الطالب المسموحة 970 أو 972 فقط"); continue;
+    }
+    if (r.phoneNational && !PHONE_RE.test(r.phoneNational)) {
+      push("error", "رقم اتصال الطالب يجب أن يبدأ بـ 059 أو 056 ويتكون من 10 أرقام"); continue;
     }
     let guardianId = (r.guardianNationalId && byNid.get(r.guardianNationalId)) || (phoneKey && byPhone.get(phoneKey)) || "";
     if (guardianId) {
@@ -311,9 +336,9 @@ studentRoutes.post("/import", requireAuth("admin", "secretary", "teacher", "stag
       }
       stmts.push(
         c.env.DB.prepare(
-          `INSERT INTO guardians (id, center_id, user_id, name, relation, national_id, call_phone, wa_cc, wa_national, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).bind(guardianId, auth.centerId, userId, r.guardianName, r.guardianRelation, r.guardianNationalId || null, r.guardianCallPhone, gCc, gWa, now, now)
+          `INSERT INTO guardians (id, center_id, user_id, name, national_id, call_phone, wa_cc, wa_national, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(guardianId, auth.centerId, userId, r.guardianName, r.guardianNationalId || null, r.guardianCallPhone, gCc, gWa, now, now)
       );
       guardiansCreated++;
       // تسجيلهما فوراً حتى يلتقط الإخوةُ في الصفوف التالية ولي الأمر نفسه
@@ -328,11 +353,11 @@ studentRoutes.post("/import", requireAuth("admin", "secretary", "teacher", "stag
     stmts.push(
       c.env.DB.prepare(
         `INSERT INTO students (id, center_id, user_id, national_id, name, birth, gender, circle_id, direction, memorized_parts, last_surah, last_ayah,
-                               ajkam_course, monthly_plan_pages, phone_cc, phone_national, guardian_id, joined_at, created_at, updated_at)
-         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                               ajkam_course, monthly_plan_pages, phone_cc, phone_national, guardian_id, guardian_relation, guardian_relation_detail, joined_at, created_at, updated_at)
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(newId(), auth.centerId, nid, r.name, r.birth, r.gender ?? circle!.category, b.circleId, r.direction, partsOf(pos), lastSurah, r.lastAyah,
         (AJKAM_COURSES as readonly string[]).includes(r.ajkamCourse) ? r.ajkamCourse : "", r.monthlyPlanPages,
-        r.phoneCc || "970", r.phoneNational, guardianId,
+        r.phoneCc || "970", r.phoneNational, guardianId, relationBucket(r.guardianRelation), r.guardianRelation,
         r.joinedAt || today, now, now)
     );
     push("added", "");
@@ -356,7 +381,15 @@ studentRoutes.post("/import", requireAuth("admin", "secretary", "teacher", "stag
 
 studentRoutes.get("/:id", requireAuth("admin", "secretary", "teacher", "stage_manager", "exam_committee"), async (c) => {
   const s = await loadStudent(c, c.req.param("id"));
-  return c.json({ student: { ...shape(s), photo: await photoOf(c, s.id), guardians: await guardiansOf(c, s.id) } });
+  const centerId = c.get("auth").centerId;
+  // نقل مرتَّب لم يسرِ بعد (يُعرض في بطاقة الطالب): من يراها يعرف أن الطالب سينتقل ومتى
+  const pendingTransferP = c.env.DB.prepare(
+    `SELECT t.to_circle_id AS toCircleId, ci.name AS toCircleName, t.effective_from AS effectiveFrom
+       FROM student_transfers t JOIN circles ci ON ci.id = t.to_circle_id
+      WHERE t.student_id = ? AND t.center_id = ? AND t.applied = 0 ORDER BY t.effective_from DESC LIMIT 1`
+  ).bind(s.id, centerId).first<{ toCircleId: string; toCircleName: string; effectiveFrom: string }>();
+  const [photo, guardians, pendingTransfer] = await Promise.all([photoOf(c, s.id), guardiansOf(c, s.id), pendingTransferP]);
+  return c.json({ student: { ...shape(s), photo, guardians, pendingTransfer: pendingTransfer ?? null } });
 });
 
 /** إنشاء طالب (وحسابه الخاص إن طُلب): المدير والسكرتير، والمعلّم لحلقته فقط. */
@@ -392,10 +425,10 @@ studentRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_mana
   const pos = { direction: b.direction, lastSurah, lastAyah: b.lastAyah };
   await c.env.DB.prepare(
     `INSERT INTO students (id, center_id, user_id, national_id, name, birth, gender, circle_id, direction, memorized_parts, last_surah, last_ayah,
-                           ajkam_course, monthly_plan_pages, phone_cc, phone_national, guardian_id, joined_at, created_at, updated_at)
-     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                           ajkam_course, monthly_plan_pages, monthly_review_plan_pages, phone_cc, phone_national, guardian_id, guardian_relation, guardian_relation_detail, joined_at, created_at, updated_at)
+     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(studentId, auth.centerId, b.nationalId, b.name, b.birth, b.gender, b.circleId, b.direction, partsOf(pos), lastSurah, b.lastAyah,
-    b.ajkamCourse, b.monthlyPlanPages, b.phoneCc || "970", b.phoneNational, guardianId,
+    b.ajkamCourse, b.monthlyPlanPages, b.monthlyReviewPlanPages, b.phoneCc || "970", b.phoneNational, guardianId, relationBucket(b.guardianRelation), b.guardianRelation,
     b.joinedAt ?? new Date().toISOString().slice(0, 10), now, now).run();
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "create", entity: "student", entityId: studentId, details: b.name });
   return c.json({ ok: true, id: studentId, guardianId }, 201);
@@ -411,6 +444,8 @@ studentRoutes.patch("/:id", requireAuth("admin", "secretary", "teacher", "stage_
   }
   // مدير المرحلة يعدّل كالسكرتير لكن لا ينقل الطالب خارج مراحله
   if (auth.role === "stage_manager" && b.circleId !== undefined) await assertStageCircle(c, b.circleId);
+  // تغيير حلقة طالب له حلقة يمرّ عبر «نقل» فقط (يحفظ تاريخه ويسري من أول الشهر التالي)
+  if (b.circleId && current.circleId && b.circleId !== current.circleId) fail(400, "لنقل الطالب إلى حلقة أخرى استعمل زر «نقل» في بطاقته");
   if (b.circleId !== undefined || b.gender !== undefined) {
     const gender = (b.gender ?? current.gender) as string;
     const circleId = (b.circleId ?? current.circleId) as string;
@@ -424,11 +459,11 @@ studentRoutes.patch("/:id", requireAuth("admin", "secretary", "teacher", "stage_
     `UPDATE students SET national_id = COALESCE(?, national_id), name = COALESCE(?, name), birth = COALESCE(?, birth), gender = COALESCE(?, gender),
             circle_id = COALESCE(?, circle_id), direction = COALESCE(?, direction), memorized_parts = COALESCE(?, memorized_parts),
             last_surah = COALESCE(?, last_surah), last_ayah = COALESCE(?, last_ayah), ajkam_course = COALESCE(?, ajkam_course),
-            monthly_plan_pages = COALESCE(?, monthly_plan_pages), phone_cc = COALESCE(?, phone_cc), phone_national = COALESCE(?, phone_national),
-            joined_at = COALESCE(?, joined_at), updated_at = ? WHERE id = ?`
+            monthly_plan_pages = COALESCE(?, monthly_plan_pages), monthly_review_plan_pages = COALESCE(?, monthly_review_plan_pages), phone_cc = COALESCE(?, phone_cc), phone_national = COALESCE(?, phone_national),
+            guardian_relation = COALESCE(?, guardian_relation), guardian_relation_detail = COALESCE(?, guardian_relation_detail), joined_at = COALESCE(?, joined_at), updated_at = ? WHERE id = ?`
   ).bind(b.nationalId ?? null, b.name ?? null, b.birth ?? null, b.gender ?? null, b.circleId ?? null, b.direction ?? null, null,
-    b.lastSurah ?? null, b.lastAyah ?? null, b.ajkamCourse ?? null, b.monthlyPlanPages ?? null, b.phoneCc ?? null, b.phoneNational ?? null,
-    b.joinedAt ?? null, Date.now(), current.id).run();
+    b.lastSurah ?? null, b.lastAyah ?? null, b.ajkamCourse ?? null, b.monthlyPlanPages ?? null, b.monthlyReviewPlanPages ?? null, b.phoneCc ?? null, b.phoneNational ?? null,
+    b.guardianRelation ? relationBucket(b.guardianRelation) : null, b.guardianRelation ?? null, b.joinedAt ?? null, Date.now(), current.id).run();
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "update", entity: "student", entityId: current.id, details: Object.keys(b).join(",") });
   return c.json({ ok: true });
 });
@@ -436,6 +471,19 @@ studentRoutes.patch("/:id", requireAuth("admin", "secretary", "teacher", "stage_
 const photoSchema = z.object({ photo: z.string().max(250_000, "الصورة كبيرة جداً").refine((v) => v === "" || v.startsWith("data:image/"), "صيغة الصورة غير صالحة") });
 
 /** صورة الطالب الشخصية (تُصغَّر في الواجهة قبل الرفع). المدير والسكرتير والمعلّم لطلابه. */
+studentRoutes.get("/:id/photo", requireAuth("admin", "secretary", "teacher", "stage_manager"), async (c) => {
+  const current = await loadStudent(c, c.req.param("id"));
+  const p = await photoOf(c, current.id);
+  if (!p || !p.startsWith("data:image/")) return c.body(null, 404);
+  const match = p.match(/^data:(image\/[a-zA-Z+]+);base64,(.*)$/);
+  if (!match) return c.body(null, 404);
+  const binary = Uint8Array.from(atob(match[2]), (m) => m.codePointAt(0)!);
+  return c.body(binary, 200, {
+    "Content-Type": match[1],
+    "Cache-Control": "public, max-age=120"
+  });
+});
+
 studentRoutes.post("/:id/photo", requireAuth("admin", "secretary", "teacher", "stage_manager"), async (c) => {
   const auth = c.get("auth");
   const current = await loadStudent(c, c.req.param("id"));
@@ -448,14 +496,38 @@ studentRoutes.post("/:id/photo", requireAuth("admin", "secretary", "teacher", "s
 studentRoutes.post("/:id/move", requireAuth("admin", "secretary", "stage_manager"), async (c) => {
   const auth = c.get("auth");
   const current = await loadStudent(c, c.req.param("id"));
-  const { circleId } = await parseBody(c, moveSchema);
+  const { circleId, reason } = await parseBody(c, moveSchema);
   if (current.archivedAt) fail(400, "الطالب مؤرشف؛ استرجعه أولاً");
   // النقل داخل مراحله فقط (loadStudent ضَمِن أن الحلقة الحالية ضمنها)
   if (auth.role === "stage_manager") await assertStageCircle(c, circleId);
+  if (current.circleId === circleId) fail(400, "الطالب في هذه الحلقة أصلاً");
   await checkCircle(c, circleId, current.gender as string, current.id);
-  await c.env.DB.prepare("UPDATE students SET circle_id = ?, updated_at = ? WHERE id = ?").bind(circleId, Date.now(), current.id).run();
-  await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "move", entity: "student", entityId: current.id, details: `${current.circleId} → ${circleId}` });
-  return c.json({ ok: true });
+  const now = Date.now();
+  // طالب بلا حلقة: توزيعه الأول ليس «نقلاً» فيسري فوراً ولا سجل انتقال له
+  if (!current.circleId) {
+    await c.env.DB.prepare("UPDATE students SET circle_id = ?, updated_at = ? WHERE id = ?").bind(circleId, now, current.id).run();
+    await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "move", entity: "student", entityId: current.id, details: `بلا حلقة → ${circleId}` });
+    return c.json({ ok: true, immediate: true, effectiveFrom: todayHebron() });
+  }
+  // نقل طالب له حلقة: يُرتَّب من اليوم 25 ويسري من أول الشهر التالي، أو فوراً من المدير بسبب مكتوب.
+  // سجلات ما قبل النقل تبقى منسوبة للحلقة القديمة (worker/lib/transfers.ts).
+  const plan = planTransfer(todayHebron(), auth.role, reason);
+  if (plan.kind === "denied") fail(plan.status, plan.message);
+  const immediate = plan.kind === "immediate";
+  await c.env.DB.batch([
+    // ترتيب جديد يحلّ محلّ أي انتقال معلّق لم يسرِ بعد
+    c.env.DB.prepare("DELETE FROM student_transfers WHERE student_id = ? AND applied = 0").bind(current.id),
+    c.env.DB.prepare(
+      `INSERT INTO student_transfers (id, center_id, student_id, from_circle_id, to_circle_id, effective_from, reason, applied, created_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(newId(), auth.centerId, current.id, current.circleId, circleId, plan.effectiveFrom, reason, immediate ? 1 : 0, auth.userId, now),
+    ...(immediate ? [c.env.DB.prepare("UPDATE students SET circle_id = ?, updated_at = ? WHERE id = ?").bind(circleId, now, current.id)] : [])
+  ]);
+  await audit(c.env.DB, {
+    centerId: auth.centerId, userId: auth.userId, action: "move", entity: "student", entityId: current.id,
+    details: `${current.circleId} → ${circleId} (${immediate ? "فوري" : "يسري من " + plan.effectiveFrom})${reason ? ": " + reason : ""}`
+  });
+  return c.json({ ok: true, immediate, effectiveFrom: plan.effectiveFrom });
 });
 
 /** الحذف = نقل إلى الأرشيف مع السبب؛ يوقف حساب الطالب ويمكن استرجاعه. */
@@ -470,6 +542,28 @@ studentRoutes.post("/:id/archive", requireAuth("admin", "secretary"), async (c) 
   ]);
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "archive", entity: "student", entityId: current.id, details: reason });
   return c.json({ ok: true });
+});
+
+/** أرشفة جماعية للطلاب النشطين، مع فلترة اختيارية حسب الحلقة. لا تحذف البيانات نهائياً. */
+studentRoutes.post("/bulk-archive", requireAuth("admin", "secretary"), async (c) => {
+  const auth = c.get("auth");
+  const b = await parseBody(c, z.object({ circleId: z.string().nullable().default(null), reason: z.string().trim().min(2).max(200) }));
+  if (b.circleId) {
+    const circle = await c.env.DB.prepare("SELECT id FROM circles WHERE id = ? AND center_id = ?").bind(b.circleId, auth.centerId).first();
+    if (!circle) fail(404, "الحلقة غير موجودة");
+  }
+  const where = b.circleId ? "center_id = ? AND circle_id = ? AND archived_at IS NULL" : "center_id = ? AND archived_at IS NULL";
+  const binds = b.circleId ? [auth.centerId, b.circleId] : [auth.centerId];
+  const count = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM students WHERE ${where}`).bind(...binds).first<{ n: number }>();
+  const n = count?.n ?? 0;
+  if (!n) return c.json({ ok: true, archived: 0 });
+  const now = Date.now();
+  await c.env.DB.batch([
+    c.env.DB.prepare(`UPDATE students SET archived_at = ?, archive_reason = ?, updated_at = ? WHERE ${where}`).bind(now, b.reason, now, ...binds),
+    c.env.DB.prepare(`UPDATE users SET active = 0, session_version = session_version + 1, updated_at = ? WHERE id IN (SELECT user_id FROM students WHERE center_id = ? AND archived_at = ? AND user_id IS NOT NULL${b.circleId ? " AND circle_id = ?" : ""})`).bind(now, auth.centerId, now, ...(b.circleId ? [b.circleId] : []))
+  ]);
+  await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "archive", entity: "student", details: `جماعي: ${n} طالباً${b.circleId ? ` من الحلقة ${b.circleId}` : " من جميع الحلقات"} — ${b.reason}` });
+  return c.json({ ok: true, archived: n });
 });
 
 studentRoutes.post("/:id/restore", requireAuth("admin", "secretary"), async (c) => {

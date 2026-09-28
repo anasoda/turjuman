@@ -19,17 +19,22 @@ async function test(name, fn) {
   try { await fn(); passed++; console.log("✓", name); } catch (e) { console.error("✗", name, "\n   ", e.message); process.exitCode = 1; }
 }
 
-const G = "tarjuman-gaza-01";
+const G = "obai-01";
 const admin = await session(G, "admin");
-const teacher = await session(G, "gaza.teacher1");
-const committee = await session(G, "gaza.committee");
+const teacher = await session(G, "obai.teacher1");
+const committee = await session(G, "obai.committee");
 
 const circles = (await call("/api/circles", { cookie: admin })).data.circles;
 const fajr = circles.find((c) => c.name === "حلقة الفجر");
-const students = (await call("/api/students", { cookie: admin })).data.students;
-const s1 = students.find((s) => s.name.startsWith("عمر")); // اتجاه تنازلي
-const s2 = students.find((s) => s.name.startsWith("ياسين")); // اتجاه تصاعدي
-const s3 = students.find((s) => s.name.startsWith("ليان")); // حلقة أخرى
+async function seedStudent(nationalId) {
+  const students = (await call(`/api/students?q=${nationalId}`, { cookie: admin })).data.students;
+  const student = students.find((s) => s.nationalId === nationalId);
+  assert.ok(student, `الطالب التجريبي ${nationalId} غير موجود`);
+  return student;
+}
+const s1 = await seedStudent("400000101"); // اتجاه تنازلي
+const s2 = await seedStudent("400000102"); // اتجاه تصاعدي
+const s3 = await seedStudent("400000103"); // حلقة أخرى
 
 const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Hebron" });
 const daysAgo = (n) => new Date(Date.now() - n * 86400_000).toLocaleDateString("en-CA", { timeZone: "Asia/Hebron" });
@@ -97,6 +102,13 @@ await test("الاختبار التجريبي: بلا تقييد للعلامة�
   assert.equal(low.data.passed, false);
   const high = await call("/api/tests/trial", { method: "POST", cookie: teacher, body: { studentId: s1.id, date: today, testType: "chain", parts: 5, rangeText: "عمّ – الأحقاف", score: 96 } });
   assert.equal(high.data.passed, true);
+  const ranged = await call("/api/tests/trial", { method: "POST", cookie: teacher, body: { studentId: s1.id, date: today, testType: "single", parts: 1, range: { kind: "juz", fromJuz: 2, toJuz: 4 }, score: 90 } });
+  assert.equal(ranged.status, 201, JSON.stringify(ranged.data));
+  const stored = (await call("/api/tests?kind=trial&pageSize=50", { cookie: teacher })).data.tests.find((t) => t.id === ranged.data.id);
+  assert.equal(stored.parts, 3);
+  assert.equal(stored.rangeKind, "juz");
+  assert.equal(stored.rangeFromJuz, 2);
+  assert.equal(stored.rangeToJuz, 4);
   assert.equal((await call("/api/tests/trial", { method: "POST", cookie: teacher, body: { studentId: s3.id, date: today, testType: "single", parts: 1, score: 90 } })).status, 404);
 });
 
@@ -110,9 +122,25 @@ await test("الاختبار الرسمي: اقتراح المحفّظ ← اع�
   assert.equal((await call(`/api/tests/${proposed.id}/approve`, { method: "POST", cookie: teacher, body: {} })).status, 403, "المعلّم لا يعتمد");
   assert.equal((await call(`/api/tests/${proposed.id}/result`, { method: "POST", cookie: committee, body: { score: 88, testDate: today } })).status, 400, "النتيجة قبل الاعتماد");
   assert.equal((await call(`/api/tests/${proposed.id}/approve`, { method: "POST", cookie: committee, body: { testDate: today } })).status, 200);
-  const done = await call(`/api/tests/${proposed.id}/result`, { method: "POST", cookie: committee, body: { score: 88, testDate: today } });
-  assert.equal(done.status, 200);
+  assert.equal((await call(`/api/tests/${proposed.id}/result`, { method: "POST", cookie: committee, body: { score: 88, testDate: today } })).status, 400, "الإدخال اليدوي ممنوع");
+  const started = await call(`/api/tests/${proposed.id}/session`, { method: "POST", cookie: committee });
+  assert.equal(started.status, 201, JSON.stringify(started.data));
+  assert.equal((await call(`/api/tests/${proposed.id}/session`, { method: "POST", cookie: committee })).data.existing, true);
+  const session = (await call(`/api/tests/${proposed.id}/session`, { cookie: committee })).data;
+  assert.equal(session.test.studentId, s1.id);
+  assert.equal(session.questions.reduce((n, q) => n + q.maxScore, 0), 100);
+  const questions = session.questions.map((q, i) => ({ id: q.id, surah: null, ayah: null, warnings: i === 0 ? 1 : 0, errors: i === 0 ? 2 : 0 }));
+  assert.equal((await call(`/api/tests/${proposed.id}/session`, { method: "PUT", cookie: teacher, body: { questions } })).status, 403, "المعلم لا يقيّم");
+  assert.equal((await call(`/api/tests/${proposed.id}/session`, { method: "PUT", cookie: committee, body: { questions: questions.slice(1) } })).status, 400, "كل الأسئلة مطلوبة");
+  const draft = await call(`/api/tests/${proposed.id}/session`, { method: "PUT", cookie: committee, body: { questions } });
+  assert.equal(draft.status, 200, JSON.stringify(draft.data));
+  assert.equal((await call(`/api/tests/${proposed.id}/session`, { cookie: committee })).data.session.status, "draft");
+  const done = await call(`/api/tests/${proposed.id}/session`, { method: "PUT", cookie: committee, body: { questions, finalize: true, testDate: today } });
+  assert.equal(done.status, 200, JSON.stringify(done.data));
+  assert.equal(done.data.totalScore, 97.5);
   assert.equal(done.data.passed, true);
+  assert.equal((await call(`/api/tests/${proposed.id}/session`, { cookie: teacher })).data.session.status, "completed");
+  assert.equal((await call(`/api/tests/${proposed.id}/session`, { method: "PUT", cookie: committee, body: { questions, finalize: true, testDate: today } })).status, 400, "لا تعديل بعد الإنهاء");
   const mine = (await call("/api/tests?kind=official", { cookie: teacher })).data;
   assert.ok(mine.tests.every((t) => t.studentId !== s3.id));
   assert.ok((await call(`/api/tests?q=${encodeURIComponent("عمّ")}`, { cookie: admin })).data.total >= 1, "بحث بنطاق الاختبار");
@@ -146,6 +174,64 @@ await test("الكشف الشهري: توليد تلقائي، تعديل يدو
   assert.equal(save.status, 200, JSON.stringify(save.data));
   assert.equal((await call(`/api/reports?month=${month}&circleId=${fajr.id}`, { cookie: admin })).data.rows.find((r) => r.studentId === s1.id).saved, true);
   assert.equal((await call("/api/reports/save", { method: "POST", cookie: admin, body: { month, rows: [{ studentId: s1.id, end: { surah: 114, ayah: 6 } }] } })).status, 400, "نهاية قبل البداية وفق الاتجاه");
+});
+
+await test("الكشف التلقائي لا يرجع نهايته عند تسميع مراجعة أقدم في يوم لاحق", async () => {
+  const stamp = Date.now().toString().slice(-8);
+  const created = await call("/api/students", { method: "POST", cookie: admin, body: {
+    name: "طالب اختبار مراجعة الكشف", nationalId: `8${stamp}`, birth: "2012-01-01", gender: "male", circleId: fajr.id,
+    direction: "descending", lastSurah: 114, lastAyah: 0, guardianId: s1.guardianId
+  } });
+  assert.equal(created.status, 201, JSON.stringify(created.data));
+  const studentId = created.data.id;
+  try {
+    const previousMonth = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 2, 10)).toISOString().slice(0, 7);
+    const first = await call("/api/daily", { method: "POST", cookie: admin, body: { studentId, date: `${previousMonth}-10`, attendance: "present", from: { surah: 114, ayah: 1 }, to: { surah: 114, ayah: 6 } } });
+    const review = await call("/api/daily", { method: "POST", cookie: admin, body: { studentId, date: `${previousMonth}-11`, attendance: "present", from: { surah: 114, ayah: 1 }, to: { surah: 114, ayah: 2 } } });
+    assert.ok([200, 201].includes(first.status) && [200, 201].includes(review.status));
+    const report = (await call(`/api/reports?month=${previousMonth}&circleId=${fajr.id}`, { cookie: admin })).data.rows.find((r) => r.studentId === studentId);
+    assert.deepEqual(report.end, { surah: 114, ayah: 6 });
+  } finally {
+    await call(`/api/students/${studentId}/archive`, { method: "POST", cookie: admin, body: { reason: "نهاية اختبار الكشف" } });
+  }
+});
+
+await test("مراجعة فقط لحافظ كامل: تظهر لولي الأمر وتُحفظ في الكشف بلا صفحات حفظ وهمية", async () => {
+  const stamp = Date.now().toString().slice(-8);
+  const created = await call("/api/students", { method: "POST", cookie: admin, body: {
+    name: "طالب اختبار مراجعة فقط", nationalId: `7${stamp}`, birth: "2012-01-01", gender: "male", circleId: fajr.id,
+    direction: "descending", lastSurah: 1, lastAyah: 7, monthlyPlanPages: 0, monthlyReviewPlanPages: 20, guardianId: s1.guardianId
+  } });
+  assert.equal(created.status, 201, JSON.stringify(created.data));
+  const studentId = created.data.id;
+  try {
+    const month = today.slice(0, 7);
+    const review = await call("/api/daily", { method: "POST", cookie: teacher, body: {
+      studentId, date: `${month}-01`, attendance: "present", from: null, to: null,
+      review: { from: { surah: 2, ayah: 1 }, to: { surah: 2, ayah: 5 }, grade: "جيد" }
+    } });
+    assert.equal(review.status, 201, JSON.stringify(review.data));
+    assert.ok(review.data.reviewPages > 0);
+    const board = (await call(`/api/daily/board?circleId=${fajr.id}&date=${month}-02`, { cookie: teacher })).data;
+    assert.deepEqual(board.rows.find((r) => r.student.id === studentId).student.reviewNext, { surah: 2, ayah: 6 });
+    const before = (await call(`/api/reports?month=${month}&circleId=${fajr.id}`, { cookie: admin })).data.rows.find((r) => r.studentId === studentId);
+    assert.equal(before.pages, 0);
+    assert.equal(before.reviewPages, review.data.reviewPages);
+    assert.equal(before.reviewDays, 1);
+    const saved = await call("/api/reports/save", { method: "POST", cookie: admin, body: { month, rows: [{ studentId, end: null }] } });
+    assert.equal(saved.status, 200, JSON.stringify(saved.data));
+    const after = (await call(`/api/reports?month=${month}&circleId=${fajr.id}`, { cookie: admin })).data.rows.find((r) => r.studentId === studentId);
+    assert.equal(after.saved, true);
+    assert.equal(after.pages, 0);
+    assert.equal(after.reviewPages, review.data.reviewPages);
+    const wali = await session(G, "801000001", "801000001");
+    const portal = (await call(`/api/portal/summary?studentId=${studentId}`, { cookie: wali })).data;
+    assert.deepEqual(portal.student.reviewLast, { surah: 2, ayah: 5 });
+    assert.equal(portal.month.reviewPages, review.data.reviewPages);
+    assert.equal(portal.reports.find((r) => r.month === month).pages, 0);
+  } finally {
+    await call(`/api/students/${studentId}/archive`, { method: "POST", cookie: admin, body: { reason: "نهاية اختبار المراجعة" } });
+  }
 });
 
 await test("دورات الأحكام: المدير يديرها والزائر يرى عددها", async () => {

@@ -24,9 +24,9 @@ async function test(name, fn) {
   try { await fn(); passed++; console.log("✓", name); } catch (e) { console.error("✗", name, "\n   ", e.message); process.exitCode = 1; }
 }
 
-const G = "tarjuman-gaza-01";
+const G = "obai-01";
 const admin = await session(G, "admin");
-const manager = await session(G, "gaza.stage1"); // مراحله: primary فقط (بذرة seed-local)
+const manager = await session(G, "obai.stage1"); // مراحله: primary فقط (بذرة seed-local)
 
 const circles = (await call("/api/circles", { cookie: admin })).data.circles;
 const staffList = (await call("/api/staff", { cookie: admin })).data.staff;
@@ -128,6 +128,18 @@ await test("لا يعدّل طالباً خارج مرحلته", async () => {
   assert.equal(r.status, 404, JSON.stringify(r.data));
 });
 
+await test("لا يحذف مدير المرحلة ملاحظة لطالب خارج نطاقه", async () => {
+  const body = `ملاحظة خارج المرحلة ${Date.now()}`;
+  assert.equal((await call("/api/notes", { method: "POST", cookie: admin, body: { studentId: outsideStudentId, body } })).status, 201);
+  const notes = (await call(`/api/notes?studentId=${outsideStudentId}`, { cookie: admin })).data.notes;
+  const note = notes.find((n) => n.body === body);
+  assert.ok(note, "لم تُنشأ الملاحظة التجريبية");
+  const denied = await call(`/api/notes/${note.id}`, { method: "DELETE", cookie: manager });
+  assert.equal(denied.status, 404, JSON.stringify(denied.data));
+  assert.ok((await call(`/api/notes?studentId=${outsideStudentId}`, { cookie: admin })).data.notes.some((n) => n.id === note.id));
+  assert.equal((await call(`/api/notes/${note.id}`, { method: "DELETE", cookie: admin })).status, 200);
+});
+
 await test("حضور الكادر: يرى معلّمي مرحلته فقط ولا يرى نفسه", async () => {
   const r = await call("/api/staff-attendance", { cookie: manager });
   assert.equal(r.status, 200, JSON.stringify(r.data));
@@ -213,7 +225,7 @@ await test("ممنوع: الإعدادات والكادر والأرشفة وس�
 });
 
 await test("السكرتير لا يدير حساب مدير المرحلة", async () => {
-  const secretary = await session(G, "gaza.secretary");
+  const secretary = await session(G, "obai.secretary");
   const sm = smAccount;
   const r = await call(`/api/staff/${sm.id}`, { method: "PATCH", cookie: secretary, body: { displayName: "محاولة تعديل من السكرتير" } });
   assert.equal(r.status, 404, JSON.stringify(r.data));
@@ -228,7 +240,7 @@ await test("المدير يبدّل مراحل مدير المرحلة", async (
   const stale = await call("/api/circles", { cookie: manager });
   assert.equal(stale.status, 401, "الجلسة القديمة لم تنتهِ بعد تغيير المراحل");
   // وبجلسة جديدة يرى المرحلتين
-  const fresh = await session(G, "gaza.stage1");
+  const fresh = await session(G, "obai.stage1");
   const seen = new Set((await call("/api/circles", { cookie: fresh })).data.circles.map((c) => c.levelKey));
   assert.ok(seen.has("primary") && seen.has(otherCircle.levelKey), "لم يرَ المرحلة المضافة");
   await call(`/api/staff/${sm.id}`, { method: "PATCH", cookie: admin, body: { stages: ["primary"] } });

@@ -37,7 +37,7 @@ export function Sard() {
 
   const remove = async (r: SardRecord) => {
     if (!(await confirm({ title: `حذف سرد ${r.studentName}؟`, confirmLabel: "حذف", danger: true }))) return;
-    if (await run(() => api(`/api/sard/${r.id}`, { method: "DELETE" }), "تم الحذف")) void load(1, true);
+    if (await confirm({ title: "تأكيد الحذف", message: "هل أنت متأكد؟ لا يمكن التراجع.", confirmLabel: "حذف", danger: true }) && await run(() => api(`/api/sard/${r.id}`, { method: "DELETE" }), "حذف")) void load(1, true);
   };
 
   return (
@@ -71,9 +71,10 @@ export function Sard() {
 function SardForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const { settings } = useMe();
   const { busy, run } = useAction();
-  const students = useFetch<{ students: Student[] }>("/api/students?pageSize=100");
-  const [studentId, setStudentId] = useState("");
-  const student = students.data?.students.find((s) => s.id === studentId) ?? students.data?.students[0];
+  const [query, setQuery] = useState("");
+  const debounced = useDebounced(query);
+  const students = useFetch<{ students: Student[] }>(`/api/students?pageSize=100${debounced ? `&q=${encodeURIComponent(debounced)}` : ""}`);
+  const [student, setStudent] = useState<Student | null>(null);
   const dir: Direction = student?.direction ?? "descending";
   const [date, setDate] = useState(todayIso());
   const [stage, setStage] = useState<"trial" | "final">("trial");
@@ -96,7 +97,10 @@ function SardForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => vo
     <Sheet title="تسجيل سرد" onClose={onClose}>
       <form className="form-grid" onSubmit={submit}>
         <Field label="الطالب">
-          <select value={student?.id ?? ""} onChange={(e) => { const s = students.data?.students.find((x) => x.id === e.target.value); setStudentId(e.target.value); if (s) { const start: Position = s.direction === "descending" ? { surah: 114, ayah: 1 } : { surah: 1, ayah: 1 }; setFrom(start); setTo(start); } }}>
+          <input className="input" placeholder="ابحث بالاسم أو رقم الهوية" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <select required value={student?.id ?? ""} onChange={(e) => { const s = students.data?.students.find((x) => x.id === e.target.value) ?? null; setStudent(s); if (s) { const start: Position = s.direction === "descending" ? { surah: 114, ayah: 1 } : { surah: 1, ayah: 1 }; setFrom(start); setTo(start); } }}>
+            <option value="">اختر الطالب</option>
+            {student && !students.data?.students.some((s) => s.id === student.id) && <option value={student.id}>{student.name}</option>}
             {students.data?.students.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </Field>

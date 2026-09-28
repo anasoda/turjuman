@@ -8,6 +8,11 @@ export interface SardBand {
   min: number;
   label: string;
 }
+export interface ExamQuestionSlot {
+  label: string;
+  maxScore: number;
+  isQuranic: boolean;
+}
 
 export interface CenterSettings {
   /** أقصى عدد طلاب في الحلقة */
@@ -30,6 +35,8 @@ export interface CenterSettings {
   hijriOffset: number;
   /** مقدمة الدولة لأرقام الجوال (بلا +): تُستعمل لروابط الاتصال والواتساب */
   phonePrefix: string;
+  /** توزيع درجات الاختبار الرسمي — المجموع يجب أن يساوي 100 */
+  examQuestionSlots: ExamQuestionSlot[];
 }
 
 export const DEFAULT_SETTINGS: CenterSettings = {
@@ -54,5 +61,12 @@ export const DEFAULT_SETTINGS: CenterSettings = {
   recitationGrades: ["ممتاز", "جيد جداً", "جيد", "مقبول", "إعادة"],
   monthlyReportOpenDay: 24,
   hijriOffset: 0,
-  phonePrefix: "970"
+  phonePrefix: "970",
+  examQuestionSlots: [
+    { label: "السؤال الأول", maxScore: 20, isQuranic: true },
+    { label: "السؤال الثاني", maxScore: 20, isQuranic: true },
+    { label: "السؤال الثالث", maxScore: 20, isQuranic: true },
+    { label: "السؤال الرابع", maxScore: 20, isQuranic: true },
+    { label: "أحكام التجويد", maxScore: 20, isQuranic: false },
+  ]
 };

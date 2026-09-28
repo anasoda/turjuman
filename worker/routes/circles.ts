@@ -102,12 +102,22 @@ circleRoutes.post("/", requireAuth("admin", "secretary"), async (c) => {
   return c.json({ ok: true, id }, 201);
 });
 
-circleRoutes.put("/:id", requireAuth("admin", "secretary"), async (c) => {
+circleRoutes.put("/:id", requireAuth("admin", "secretary", "teacher"), async (c) => {
   const auth = c.get("auth");
   const id = c.req.param("id");
   const existing = await c.env.DB.prepare("SELECT id, category FROM circles WHERE id = ? AND center_id = ?").bind(id, auth.centerId).first<{ id: string; category: string }>();
   if (!existing) fail(404, "الحلقة غير موجودة");
+  if (auth.role === "teacher") {
+    const own = await c.env.DB.prepare("SELECT 1 FROM circle_teachers WHERE circle_id = ? AND teacher_id = ?").bind(id, auth.userId).first();
+    if (!own) fail(404, "الحلقة غير موجودة");
+  }
   const b = await parseBody(c, circleSchema);
+  if (auth.role === "teacher") {
+    const assigned = await c.env.DB.prepare("SELECT teacher_id AS teacherId, kind FROM circle_teachers WHERE circle_id = ?").bind(id).all<{ teacherId: string; kind: string }>();
+    const primary = assigned.results.find((x) => x.kind === "primary")?.teacherId ?? null;
+    const assistant = assigned.results.find((x) => x.kind === "assistant")?.teacherId ?? null;
+    if (b.primaryTeacherId !== primary || b.assistantTeacherId !== assistant) fail(403, "لا يمكنك تغيير إسناد معلّمي الحلقة");
+  }
   await assertLevel(c, b.levelKey);
   const dup = await c.env.DB.prepare("SELECT id FROM circles WHERE center_id = ? AND name = ? AND id <> ?").bind(auth.centerId, b.name, id).first();
   if (dup) fail(409, "يوجد حلقة بهذا الاسم");
@@ -135,6 +145,9 @@ circleRoutes.delete("/:id", requireAuth("admin", "secretary"), async (c) => {
   // المؤرشفون لا يمنعون الحذف (§15.5): يُفكّ ارتباطهم بالحلقة المحذوفة.
   const has = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM students WHERE circle_id = ? AND archived_at IS NULL").bind(id).first<{ n: number }>();
   if (has && has.n > 0) fail(400, `لا يمكن حذف الحلقة قبل نقل طلابها (${has.n})؛ يمكنك تعطيلها بدلاً من ذلك`);
+  const hasDaily = await c.env.DB.prepare("SELECT 1 FROM daily_records WHERE circle_id = ? LIMIT 1").bind(id).first();
+  const hasSard = await c.env.DB.prepare("SELECT 1 FROM sard_records WHERE circle_id = ? LIMIT 1").bind(id).first();
+  if (hasDaily || hasSard) fail(400, "لا يمكن حذف الحلقة لوجود سجلات تسميع أو سرد تاريخية مرتبطة بها؛ يمكنك تعطيلها بدلاً من ذلك");
   await c.env.DB.batch([
     c.env.DB.prepare("UPDATE students SET circle_id = NULL, updated_at = ? WHERE circle_id = ?").bind(Date.now(), id),
     c.env.DB.prepare("DELETE FROM circle_schedule WHERE circle_id = ?").bind(id),

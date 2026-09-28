@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Field, Sheet, useAction, useUi } from "../components/ui";
 import { api } from "../lib/api";
-import { useFetch } from "../lib/hooks";
+import { useDebounced, useFetch } from "../lib/hooks";
 import { useMe } from "../lib/session";
 import type { Student } from "../lib/types";
 import { countAr, STUDENTS_AR } from "../lib/format";
@@ -36,21 +36,24 @@ export function Courses() {
 function CourseForm({ course, onClose, onSaved }: { course: Course | null; onClose: () => void; onSaved: () => void }) {
   const { busy, run } = useAction();
   const { confirm } = useUi();
-  const students = useFetch<{ students: Student[] }>("/api/students?pageSize=100");
-  const current = useFetch<{ students: Array<{ id: string }> }>(course ? `/api/courses/${course.id}` : null);
-  const [picked, setPicked] = useState<Set<string> | null>(null);
-  const selected = picked ?? new Set((current.data?.students ?? []).map((s) => s.id));
-  const toggle = (id: string) => { const n = new Set(selected); n.has(id) ? n.delete(id) : n.add(id); setPicked(n); };
+  const [query, setQuery] = useState("");
+  const debounced = useDebounced(query);
+  const students = useFetch<{ students: Student[] }>(`/api/students?pageSize=100${debounced ? `&q=${encodeURIComponent(debounced)}` : ""}`);
+  const current = useFetch<{ students: Array<{ id: string; name: string }> }>(course ? `/api/courses/${course.id}` : null);
+  const [picked, setPicked] = useState<Map<string, { id: string; name: string; circleName?: string | null }> | null>(null);
+  const selected: Map<string, { id: string; name: string; circleName?: string | null }> = picked ?? new Map((current.data?.students ?? []).map((s) => [s.id, s]));
+  const visible = [...selected.values()].filter((s) => !students.data?.students.some((x) => x.id === s.id)).concat(students.data?.students ?? []);
+  const toggle = (student: { id: string; name: string; circleName?: string | null }) => { const n = new Map(selected); n.has(student.id) ? n.delete(student.id) : n.set(student.id, student); setPicked(n); };
 
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const body = { name: String(f.get("name")), startsOn: String(f.get("startsOn")) || null, endsOn: String(f.get("endsOn")) || null, status: String(f.get("status")), studentIds: [...selected] };
+    const body = { name: String(f.get("name")), startsOn: String(f.get("startsOn")) || null, endsOn: String(f.get("endsOn")) || null, status: String(f.get("status")), studentIds: [...selected.keys()] };
     if (await run(() => (course ? api(`/api/courses/${course.id}`, { method: "PUT", body }) : api("/api/courses", { method: "POST", body })), "تم الحفظ")) onSaved();
   };
   const remove = async () => {
     if (!course || !(await confirm({ title: `حذف ${course.name}؟`, confirmLabel: "حذف", danger: true }))) return;
-    if (await run(() => api(`/api/courses/${course.id}`, { method: "DELETE" }), "تم الحذف")) onSaved();
+    if (await confirm({ title: "تأكيد الحذف", message: "هل أنت متأكد؟ لا يمكن التراجع.", confirmLabel: "حذف", danger: true }) && await run(() => api(`/api/courses/${course.id}`, { method: "DELETE" }), "حذف")) onSaved();
   };
 
   return (
@@ -64,10 +67,11 @@ function CourseForm({ course, onClose, onSaved }: { course: Course | null; onClo
         <Field label="الحالة"><select name="status" defaultValue={course?.status ?? "active"}><option value="active">جارية</option><option value="ended">منتهية</option></select></Field>
         <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
           <legend className="muted" style={{ fontSize: ".85rem", marginBottom: 4 }}>المشاركون ({selected.size})</legend>
+          <input className="input" placeholder="ابحث عن طالب بالاسم أو رقم الهوية" value={query} onChange={(e) => setQuery(e.target.value)} />
           <div className="list" style={{ maxHeight: 200, overflow: "auto" }}>
-            {students.data?.students.map((s) => (
+            {visible.map((s) => (
               <label key={s.id} className="card row-card" style={{ padding: 10 }}>
-                <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggle(s.id)} style={{ width: 20, height: 20 }} />
+                <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggle(s)} style={{ width: 20, height: 20 }} />
                 <span className="grow"><b>{s.name}</b><small>{s.circleName ?? "—"}</small></span>
               </label>
             ))}

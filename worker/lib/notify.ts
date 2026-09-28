@@ -7,13 +7,14 @@ export interface NotifyInput {
   title: string;
   body?: string;
   link?: string;
+  sourceId?: string;
 }
 
 /** إشعار داخل الموقع لمستخدم واحد. أي قناة خارجية (واتساب/رسائل) تُبنى لاحقاً فوق هذا الجدول. */
 export function notifyStatement(db: D1Database, n: NotifyInput): D1PreparedStatement {
   return db
-    .prepare("INSERT INTO notifications (id, center_id, user_id, kind, title, body, link, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(newId(), n.centerId, n.userId, n.kind, n.title, n.body ?? "", n.link ?? "", Date.now());
+    .prepare("INSERT INTO notifications (id, center_id, user_id, kind, title, body, link, created_at, source_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(newId(), n.centerId, n.userId, n.kind, n.title, n.body ?? "", n.link ?? "", Date.now(), n.sourceId ?? null);
 }
 
 /** إشعار «best effort»: فشل الإشعار لا يُفشل العملية الأصلية. */

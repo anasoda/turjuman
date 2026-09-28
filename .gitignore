@@ -13,3 +13,4 @@ coverage/
 .dev.vars.*
 .DS_Store
 .claude/skills/*/scripts/__pycache__/
+graphify-out/

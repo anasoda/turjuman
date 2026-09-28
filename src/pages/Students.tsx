@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { DIRECTION_LABELS, GENDER_LABELS, RELATION_LABELS } from "@shared/constants";
 import { SURAHS } from "@shared/quran-data";
+import { planTransfer } from "@shared/transfer-plan";
 import { Field, Icons, Sheet, useAction, useUi } from "../components/ui";
 import { ContactIcons, ContactRow } from "../components/Contact";
 import { StudentImport } from "./StudentImport";
@@ -11,14 +12,17 @@ import { initials, useDebounced, useFetch, useWantsNew } from "../lib/hooks";
 import { useMe } from "../lib/session";
 import type { Circle, Student } from "../lib/types";
 import { StudentTools } from "./StudentExtras";
-import { countAr, PARTS_AR, STUDENTS_AR } from "../lib/format";
+import { countAr, fmtDay, fmtPos, fmtPosPage, STUDENTS_AR, todayIso } from "../lib/format";
 
 const PAGE = 30;
 
 export function Students() {
   const { user } = useMe();
-  const canCreate = user.role === "admin" || user.role === "secretary" || user.role === "teacher" || user.role === "stage_manager";
-  const [q, setQ] = useState("");
+  const { confirm, toast } = useUi();
+  const [searchParams] = useSearchParams();
+  // لا نعرض للمعلم زر إضافة طالب؛ الإضافة تتطلب حلقة مسندة إليه.
+  const canCreate = user.role === "admin" || user.role === "secretary" || user.role === "stage_manager";
+  const [q, setQ] = useState(searchParams.get("q") ?? "");
   const dq = useDebounced(q);
   const [circleId, setCircleId] = useState("");
   const [items, setItems] = useState<Student[]>([]);
@@ -53,6 +57,17 @@ export function Students() {
   useEffect(() => { void load(1, true); }, [load]);
   const refresh = () => load(1, true);
 
+  const bulkArchive = async () => {
+    if (!total) return;
+    const scope = circleId ? `الحلقة المحددة (${total} طالباً)` : `جميع الطلاب (${total} طالباً)`;
+    if (!(await confirm({ title: `أرشفة ${scope}؟`, message: "سيختفي الطلاب من القوائم النشطة ويمكن استرجاعهم من الأرشيف.", confirmLabel: "متابعة", danger: true }))) return;
+    if (!(await confirm({ title: "تأكيد العملية", message: `سيتم أرشفة ${scope}. لا تستخدم هذا الزر إلا إذا كنت متأكداً.`, confirmLabel: "أرشفة الطلاب", danger: true }))) return;
+    const r = await api<{ archived: number }>("/api/students/bulk-archive", { method: "POST", body: { circleId: circleId || null, reason: circleId ? "أرشفة جماعية للحلقة" : "أرشفة جماعية للمركز" } });
+    setDetail(null);
+    await refresh();
+    toast(`تمت أرشفة ${r.archived} طالباً`, "ok");
+  };
+
   return (
     <main className="page">
       <div className="page-head">
@@ -67,15 +82,19 @@ export function Students() {
           </select>
         )}
       </div>
+      {(user.role === "admin" || user.role === "secretary") && total > 0 && <div className="actions">
+        <button className="btn ghost danger small" type="button" onClick={() => void bulkArchive()}>{circleId ? "أرشفة طلاب الحلقة" : "أرشفة جميع الطلاب"}</button>
+      </div>}
       {error && <div className="error-box">{error}</div>}
       <div className="list">
         {items.map((s) => (
           <div key={s.id} className="card row-card">
-            <button className="row-main" type="button" onClick={() => setDetail(s)}>
-              <span className="avatar">{initials(s.name)}</span>
-              <span className="grow">
+              <button className="row-main" type="button" onClick={() => setDetail(s)}>
+                {s.hasPhoto ? <img src={`/api/students/${s.id}/photo?v=2`} alt={s.name} className="avatar" style={{ objectFit: "cover" }} /> : <span className="avatar">{initials(s.name)}</span>}
+                <span className="grow">
+
                 <b>{s.name}</b>
-                <small>{s.direction === "descending" ? "↓" : "↑"} {s.circleName ?? "بلا حلقة"} · {countAr(s.memorizedParts, PARTS_AR)} · خطة {s.monthlyPlanPages} ص/شهر</small>
+                <small>{s.direction === "descending" ? "↓" : "↑"} {s.circleName ?? "بلا حلقة"} · حفظ: {s.lastAyah ? fmtPos({ surah: s.lastSurah, ayah: s.lastAyah }) : "لم يبدأ"} · مراجعة: {s.reviewSurah ? fmtPos({ surah: s.reviewSurah, ayah: s.reviewAyah! }) : "—"}</small>
               </span>
             </button>
             <ContactIcons cc={s.phoneCc} national={s.phoneNational} label={s.name} subject={`بخصوص الطالب ${s.name}`} />
@@ -91,13 +110,13 @@ export function Students() {
         </div>
       )}
 
-      {form && circles.data && (
+      {form && circles.data ? (
         <StudentForm student={form === "new" ? null : form} circles={circles.data.circles} onClose={() => setForm(null)} onSaved={() => { setForm(null); setDetail(null); void refresh(); }} />
-      )}
-      {importing && circles.data && <StudentImport circles={circles.data.circles} onClose={() => setImporting(false)} onDone={() => void refresh()} />}
-      {detail && circles.data && (
+      ) : importing && circles.data ? (
+        <StudentImport circles={circles.data.circles} onClose={() => setImporting(false)} onDone={() => void refresh()} />
+      ) : detail && circles.data ? (
         <StudentDetail student={detail} circles={circles.data.circles} onClose={() => setDetail(null)} onEdit={() => { setForm(detail); }} onChanged={() => { setDetail(null); void refresh(); }} />
-      )}
+      ) : null}
     </main>
   );
 }
@@ -124,10 +143,12 @@ function StudentDetail({ student: s, circles, onClose, onEdit, onChanged }: { st
         <dt>رقم الهوية</dt><dd dir="ltr" style={{ textAlign: "end" }}>{s.nationalId}</dd>
         <dt>الميلاد</dt><dd>{s.birth}</dd>
         <dt>الجنس</dt><dd>{GENDER_LABELS[s.gender]}</dd>
+        {full.data?.student.pendingTransfer && <><dt>نقل مرتَّب</dt><dd>إلى {full.data.student.pendingTransfer.toCircleName} من {fmtDay(full.data.student.pendingTransfer.effectiveFrom)}</dd></>}
         <dt>اتجاه الحفظ</dt><dd>{DIRECTION_LABELS[s.direction]}</dd>
-        <dt>المحفوظ</dt><dd>{countAr(s.memorizedParts, PARTS_AR)} مكتملة</dd>
-        <dt>آخر موضع</dt><dd>سورة {surah}{s.lastAyah ? ` — آية ${s.lastAyah}` : " (لم يبدأ فيها)"}</dd>
-        <dt>الخطة الشهرية</dt><dd>{s.monthlyPlanPages} صفحة</dd>
+        <dt>موضع الحفظ الجديد</dt><dd>سورة {surah}{s.lastAyah ? ` — آية ${s.lastAyah}` : " (لم يبدأ فيها)"}</dd>
+        <dt>موضع المراجعة</dt><dd>{s.reviewSurah ? fmtPosPage({ surah: s.reviewSurah, ayah: s.reviewAyah! }) : "لا مراجعة مسجّلة"}</dd>
+        <dt>خطة الحفظ الشهرية</dt><dd>{s.monthlyPlanPages} صفحة</dd>
+        <dt>خطة المراجعة الشهرية</dt><dd>{s.monthlyReviewPlanPages} صفحة</dd>
         <dt>آخر دورة أحكام</dt><dd>{s.ajkamCourse || "—"}</dd>
       </dl>
 
@@ -140,8 +161,12 @@ function StudentDetail({ student: s, circles, onClose, onEdit, onChanged }: { st
         <div className="contact-block">
           <b>ولي الأمر</b>
           {guardians.map((g) => (
-            <ContactRow key={g.id} cc={g.waCc} national={g.waNational} callNational={g.callPhone} label={g.name}
-              title={`${RELATION_LABELS[g.relation]}: ${g.name}`} subject={`بخصوص الطالب ${s.name}`} />
+            <div key={g.id}>
+              <Link to={`/app/guardians?q=${encodeURIComponent(g.nationalId ?? g.name)}`} style={{ textDecoration: "none", color: "inherit", display: "block" }}>
+                <ContactRow cc={g.waCc} national={g.waNational} callNational={g.callPhone} label={g.name}
+                  title={`${RELATION_LABELS[g.relation]}: ${g.name}`} subject={`بخصوص الطالب ${s.name}`} />
+              </Link>
+            </div>
           ))}
         </div>
       )}
@@ -158,19 +183,35 @@ function StudentDetail({ student: s, circles, onClose, onEdit, onChanged }: { st
 
 function MoveSheet({ s, circles, onClose, onDone }: { s: Student; circles: Circle[]; onClose: () => void; onDone: () => void }) {
   const { busy, run } = useAction();
-  const { settings } = useMe();
+  const { settings, user } = useMe();
   const options = circles.filter((c) => c.active && c.category === s.gender && c.id !== s.circleId);
   const [to, setTo] = useState(options[0]?.id ?? "");
+  const [reason, setReason] = useState("");
+  // طالب بلا حلقة يُوزَّع فوراً؛ من له حلقة يخضع لقاعدة الشهر (يُرتَّب من اليوم 25 ويسري من أول الشهر التالي)
+  const plan = s.circleId ? planTransfer(todayIso(), user.role, reason) : null;
+  const needsReason = !!plan && (plan.kind === "immediate" || (plan.kind === "denied" && plan.status === 400));
+  const blocked = !!plan && plan.kind === "denied" && plan.status === 403;
+  const done = plan?.kind === "arranged" ? `رُتّب النقل ويسري من ${fmtDay(plan.effectiveFrom)}` : "تم نقل الطالب";
   return (
     <Sheet title={`نقل ${s.name}`} onClose={onClose}>
-      {options.length === 0 ? <p className="muted">لا توجد حلقة فعّالة أخرى من نفس الفئة.</p> : (
+      {options.length === 0 ? <p className="muted">لا توجد حلقة فعّالة أخرى من نفس الفئة.</p> : blocked ? (
+        <div className="error-box">{plan!.kind === "denied" ? plan!.message : ""}</div>
+      ) : (
         <>
           <Field label="الحلقة الجديدة">
             <select value={to} onChange={(e) => setTo(e.target.value)}>
               {options.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.studentCount}/{settings.maxStudentsPerCircle})</option>)}
             </select>
           </Field>
-          <button className="btn" disabled={busy || !to} onClick={async () => { if (await run(() => api(`/api/students/${s.id}/move`, { method: "POST", body: { circleId: to } }), "تم نقل الطالب")) onDone(); }}>نقل</button>
+          {plan?.kind === "arranged" && <p className="muted">يسري النقل من {fmtDay(plan.effectiveFrom)}؛ يبقى الطالب وسجلات هذا الشهر في حلقته الحالية حتى ذلك اليوم.</p>}
+          {needsReason && (
+            <Field label="سبب النقل (إجباري)" hint="النقل قبل اليوم 25 استثناء من مدير المركز ويسري فوراً؛ سجلاته السابقة تبقى في الحلقة القديمة.">
+              <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} />
+            </Field>
+          )}
+          <button className="btn" disabled={busy || !to || (needsReason && reason.trim().length < 3)} onClick={async () => {
+            if (await run(() => api(`/api/students/${s.id}/move`, { method: "POST", body: { circleId: to, reason: reason.trim() } }), done)) onDone();
+          }}>{plan?.kind === "arranged" ? "ترتيب النقل" : "نقل"}</button>
         </>
       )}
     </Sheet>

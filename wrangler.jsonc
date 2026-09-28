@@ -3,6 +3,9 @@
 	// الأسرار تُضبط بالأمر (لا تُكتب هنا):
 	//   npx wrangler secret put JWT_SECRET
 	//   npx wrangler secret put ADMIN_BOOTSTRAP_KEY
+	//   npx wrangler secret put VAPID_PUBLIC_KEY
+	//   npx wrangler secret put VAPID_PRIVATE_KEY
+	//   npx wrangler secret put VAPID_SUBJECT    // مثال: mailto:admin@example.com
 	"name": "turjuman-v2",
 	"main": "worker/index.ts",
 	"compatibility_date": "2026-05-15",

@@ -40,10 +40,13 @@ export interface Student {
   circleName: string | null;
   direction: Direction;
   memorizedParts: number;
+  reviewSurah: number | null;
+  reviewAyah: number | null;
   lastSurah: number;
   lastAyah: number;
   ajkamCourse: string;
   monthlyPlanPages: number;
+  monthlyReviewPlanPages: number;
   phoneCc: string;
   phoneNational: string;
   guardianId: string | null;
@@ -58,6 +61,8 @@ export interface Student {
   photo?: string;
   /** أولياء الأمر أصحاب الحسابات المرتبطة بالطالب (في ملفه الفردي فقط) */
   guardians?: StudentGuardian[];
+  /** نقل مرتَّب لم يسرِ بعد (في ملفه الفردي فقط) */
+  pendingTransfer?: { toCircleId: string; toCircleName: string; effectiveFrom: string } | null;
 }
 
 /** ولي الأمر كيان مستقل عن الحساب (§15.7): id ثابت، و userId فارغ إن لم يُنشأ حساب بعد. */

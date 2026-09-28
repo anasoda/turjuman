@@ -5,6 +5,7 @@ import { HTTPException } from "hono/http-exception";
 import type { Role } from "../../shared/constants";
 import type { AppEnv, AuthCtx } from "../env";
 import { sha256 } from "./crypto";
+import { applyDueTransfers } from "./transfers";
 
 export const COOKIE = "tq_session";
 export const TOKEN_TTL_SECONDS = 30 * 24 * 3600;
@@ -82,6 +83,7 @@ export function requireAuth(...roles: Role[]): MiddlewareHandler<AppEnv> {
     if (!auth) throw new HTTPException(401, { message: "الجلسة منتهية، سجّل الدخول من جديد" });
     if (roles.length && !roles.includes(auth.role)) throw new HTTPException(403, { message: "لا تملك صلاحية لهذا الإجراء" });
     c.set("auth", auth);
+    await applyDueTransfers(c.env.DB, auth.centerId);
     await next();
   };
 }

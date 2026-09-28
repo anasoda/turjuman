@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import { GUARDIAN_RELATIONS, MIN_PASSWORD, NATIONAL_ID_RE, USERNAME_RE } from "../../shared/constants";
+import { MIN_PASSWORD, NATIONAL_ID_RE, PHONE_RE, USERNAME_RE, WA_PREFIXES } from "../../shared/constants";
 import { completedJuz } from "../../shared/quran";
 import type { AppEnv } from "../env";
 import { requireAuth } from "../lib/auth";
@@ -21,10 +21,9 @@ const MANAGERS = ["admin", "secretary"] as const;
 /** بيانات ولي الأمر نفسها — إجبارية (§15.7). */
 export const guardianFields = {
   name: z.string().trim().min(3, "اسم ولي الأمر 3 أحرف على الأقل").max(100),
-  relation: z.enum(GUARDIAN_RELATIONS).default("father"),
-  callPhone: z.string().trim().min(7, "رقم الاتصال مطلوب").max(20),
-  waCc: z.string().trim().max(4).default("970"),
-  waNational: z.string().trim().min(7, "رقم الواتساب مطلوب").max(20),
+  callPhone: z.string().regex(PHONE_RE, "الرقم يجب أن يبدأ بـ 059 أو 056 ويتكون من 10 أرقام"),
+  waCc: z.enum(WA_PREFIXES, { errorMap: () => ({ message: "المقدمة المسموحة 970 أو 972 فقط" }) }).default("970"),
+  waNational: z.string().regex(PHONE_RE, "الرقم يجب أن يبدأ بـ 059 أو 056 ويتكون من 10 أرقام").default(""),
   nationalId: z.string().trim().max(20).default("")
 };
 
@@ -41,13 +40,13 @@ const passwordSchema = z.object({ password: z.string().min(MIN_PASSWORD, `كلم
 const activeSchema = z.object({ active: z.boolean() });
 
 const SELECT_GUARDIANS = `
-  SELECT g.id, g.user_id AS userId, g.name, g.relation, g.national_id AS nationalId,
+  SELECT g.id, g.user_id AS userId, g.name, g.national_id AS nationalId,
          g.call_phone AS callPhone, g.wa_cc AS waCc, g.wa_national AS waNational,
          u.username, u.active
     FROM guardians g LEFT JOIN users u ON u.id = g.user_id`;
 
 interface GuardianRow {
-  id: string; userId: string | null; name: string; relation: string; nationalId: string | null;
+  id: string; userId: string | null; name: string; nationalId: string | null;
   callPhone: string; waCc: string; waNational: string; username: string | null; active: number | null;
 }
 
@@ -91,7 +90,7 @@ async function childrenOf(db: D1Database, centerId: string, guardianIds: string[
 export async function findOrCreateGuardian(
   db: D1Database,
   centerId: string,
-  g: { name: string; relation: string; callPhone: string; waCc: string; waNational: string; nationalId: string },
+  g: { name: string; callPhone: string; waCc: string; waNational: string; nationalId: string },
   now: number
 ): Promise<{ id: string; created: boolean }> {
   if (g.nationalId) {
@@ -105,19 +104,21 @@ export async function findOrCreateGuardian(
   }
   const id = newId();
   await db.prepare(
-    `INSERT INTO guardians (id, center_id, user_id, name, relation, national_id, call_phone, wa_cc, wa_national, created_at, updated_at)
-     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, centerId, g.name, g.relation, g.nationalId || null, g.callPhone, g.waCc || "970", g.waNational, now, now).run();
+    `INSERT INTO guardians (id, center_id, user_id, name, national_id, call_phone, wa_cc, wa_national, created_at, updated_at)
+     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, centerId, g.name, g.nationalId || null, g.callPhone, g.waCc || "970", g.waNational, now, now).run();
   return { id, created: true };
 }
 
 /* ============================ للكادر الإداري ============================ */
 
-guardianRoutes.get("/", requireAuth(...MANAGERS), async (c) => {
+guardianRoutes.get("/", requireAuth("admin", "secretary", "teacher"), async (c) => {
   const auth = c.get("auth");
   const q = (new URL(c.req.url).searchParams.get("q") || "").trim();
-  const where = q ? "AND (g.name LIKE ? OR g.wa_national LIKE ? OR g.call_phone LIKE ? OR g.national_id LIKE ?)" : "";
+  const teacherScope = auth.role === "teacher" ? "AND EXISTS (SELECT 1 FROM students sx JOIN circle_teachers ctx ON ctx.circle_id = sx.circle_id WHERE sx.guardian_id = g.id AND sx.archived_at IS NULL AND ctx.teacher_id = ?)" : "";
+  const where = `${q ? "AND (g.name LIKE ? OR g.wa_national LIKE ? OR g.call_phone LIKE ? OR g.national_id LIKE ?)" : ""}${teacherScope}`;
   const binds = q ? [`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`] : [];
+  if (auth.role === "teacher") binds.push(auth.userId);
   const { results } = await c.env.DB.prepare(`${SELECT_GUARDIANS} WHERE g.center_id = ? ${where} ORDER BY g.name LIMIT 300`)
     .bind(auth.centerId, ...binds)
     .all<GuardianRow>();
@@ -177,9 +178,9 @@ guardianRoutes.post("/", requireAuth(...MANAGERS), async (c) => {
 
   stmts.push(
     c.env.DB.prepare(
-      `INSERT INTO guardians (id, center_id, user_id, name, relation, national_id, call_phone, wa_cc, wa_national, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(id, auth.centerId, userId, b.name, b.relation, b.nationalId || null, b.callPhone, b.waCc || "970", b.waNational, now, now),
+      `INSERT INTO guardians (id, center_id, user_id, name, national_id, call_phone, wa_cc, wa_national, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(id, auth.centerId, userId, b.name, b.nationalId || null, b.callPhone, b.waCc || "970", b.waNational, now, now),
     ...students.map((sid) => c.env.DB.prepare("UPDATE students SET guardian_id = ?, updated_at = ? WHERE id = ? AND center_id = ?").bind(id, now, sid, auth.centerId))
   );
   await c.env.DB.batch(stmts);
@@ -205,9 +206,14 @@ async function loadGuardian(c: Context<AppEnv>, id: string) {
   return row;
 }
 
-guardianRoutes.patch("/:id", requireAuth(...MANAGERS), async (c) => {
+guardianRoutes.patch("/:id", requireAuth("admin", "secretary", "teacher"), async (c) => {
   const auth = c.get("auth");
   const g = await loadGuardian(c, c.req.param("id"));
+  if (auth.role === "teacher") {
+    const own = await c.env.DB.prepare("SELECT 1 FROM students s JOIN circle_teachers ct ON ct.circle_id = s.circle_id WHERE s.guardian_id = ? AND s.center_id = ? AND s.archived_at IS NULL AND ct.teacher_id = ? LIMIT 1")
+      .bind(g.id, auth.centerId, auth.userId).first();
+    if (!own) fail(404, "ولي الأمر غير موجود");
+  }
   const b = await parseBody(c, updateSchema);
   if (b.nationalId) {
     const dupNid = await c.env.DB.prepare("SELECT id FROM guardians WHERE center_id = ? AND national_id = ? AND id <> ?").bind(auth.centerId, b.nationalId, g.id).first();
@@ -216,10 +222,10 @@ guardianRoutes.patch("/:id", requireAuth(...MANAGERS), async (c) => {
   const now = Date.now();
   await c.env.DB.batch([
     c.env.DB.prepare(
-      `UPDATE guardians SET name = COALESCE(?, name), relation = COALESCE(?, relation), national_id = COALESCE(?, national_id),
+      `UPDATE guardians SET name = COALESCE(?, name), national_id = COALESCE(?, national_id),
                             call_phone = COALESCE(?, call_phone), wa_cc = COALESCE(?, wa_cc), wa_national = COALESCE(?, wa_national), updated_at = ?
         WHERE id = ?`
-    ).bind(b.name ?? null, b.relation ?? null, b.nationalId ?? null, b.callPhone ?? null, b.waCc ?? null, b.waNational ?? null, now, g.id),
+    ).bind(b.name ?? null, b.nationalId ?? null, b.callPhone ?? null, b.waCc ?? null, b.waNational ?? null, now, g.id),
     // الاسم المعروض على الحساب يتبع اسم ولي الأمر
     ...(b.name && g.userId ? [c.env.DB.prepare("UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?").bind(b.name, now, g.userId)] : [])
   ]);

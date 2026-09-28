@@ -43,12 +43,19 @@ export const QUALIFICATIONS = ["ثانوية عامة", "بكالوريوس", "�
 
 export const USERNAME_RE = /^[^\s]{3,64}$/u;
 export const MIN_PASSWORD = 8;
-export const GUARDIAN_RELATIONS = ["father", "mother", "other"] as const;
+export const GUARDIAN_RELATIONS = ["father", "mother", "grandfather", "grandmother", "paternal_uncle", "paternal_aunt", "maternal_uncle", "maternal_aunt", "brother", "sister", "other"] as const;
 export type GuardianRelation = (typeof GUARDIAN_RELATIONS)[number];
-export const RELATION_LABELS: Record<GuardianRelation, string> = { father: "الأب", mother: "الأم", other: "قريب" };
+export const RELATION_LABELS: Record<GuardianRelation, string> = {
+  father: "الأب", mother: "الأم", grandfather: "الجد", grandmother: "الجدة",
+  paternal_uncle: "العم", paternal_aunt: "العمة", maternal_uncle: "الخال", maternal_aunt: "الخالة",
+  brother: "الأخ", sister: "الأخت", other: "قريب آخر"
+};
 
 export const NATIONAL_ID_RE = /^[0-9]{9}$/;
 export const PHONE_RE = /^05[96][0-9]{7}$/;
+/** مقدمات الدولة المسموحة لكل أرقام الواتساب والجوال: فلسطين (970) والأراضي المحتلة عام 48 (972) فقط. */
+export const WA_PREFIXES = ["970", "972"] as const;
+export const WA_PREFIX_LABELS: Record<(typeof WA_PREFIXES)[number], string> = { "970": "+970 فلسطين", "972": "+972 (الداخل 48)" };
 
 /** مواعيد الحلقة بالصلوات (§15.6) — '' يعني موعداً بالساعات. */
 export const PRAYER_SLOTS = ["fajr", "dhuhr", "asr", "maghrib", "isha"] as const;

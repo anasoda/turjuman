@@ -22,7 +22,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const data = await api<MeResponse>("/api/auth/me");
       // جلسة مركز آخر لا تُستعمل في هذا المركز
       const mine = data.center.id === getCenterId() ? data : null;
-      if (mine) { setApiUser(mine.user.id); startSync(); }
+      if (mine) { setApiUser(mine.user.id); startSync(mine.user.role); }
       setMe(mine);
     } catch {
       setMe(null);

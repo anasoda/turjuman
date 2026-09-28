@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  completedJuz, countPages, countUniquePages, countVerses, furthest, isValidRange, mushafPageFor, nextStart, orderKey, sardBand, sardScore
+  completedJuz, countPages, countUniquePages, countVerses, furthest, isValidRange, mushafPageFor, nextStart, orderKey, rangeDirection, sardBand, sardScore
 } from "../../shared/quran";
 import { DEFAULT_SETTINGS } from "../../shared/settings";
 
@@ -93,5 +93,23 @@ describe("درجات السرد", () => {
     expect(sardBand(s, 85)).toBe("جيد جداً");
     expect(sardBand(s, 69.5)).toBe("إعادة");
     expect(sardScore(s, 500, 0)).toBe(0);
+  });
+});
+
+describe("اتجاه نطاق المراجعة (حرّ)", () => {
+  it("يفضّل اتجاه الطالب إن صلح", () => {
+    expect(rangeDirection("descending", P(114, 1), P(110, 3))).toBe("descending");
+    expect(rangeDirection("ascending", P(2, 1), P(3, 5))).toBe("ascending");
+  });
+  it("يقبل العكس إن لم يصلح اتجاه الطالب", () => {
+    // طالب تنازلي يراجع مقطعاً بترتيب المصحف: من البقرة إلى آل عمران
+    expect(rangeDirection("descending", P(2, 1), P(3, 5))).toBe("ascending");
+    expect(rangeDirection("ascending", P(114, 1), P(110, 3))).toBe("descending");
+  });
+  it("يرفض موضعاً غير صالح", () => {
+    expect(rangeDirection("descending", P(1, 99), P(2, 1))).toBeNull();
+  });
+  it("داخل السورة الواحدة يبقى اتجاه الطالب", () => {
+    expect(rangeDirection("descending", P(2, 1), P(2, 50))).toBe("descending");
   });
 });

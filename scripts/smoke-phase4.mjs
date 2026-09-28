@@ -26,9 +26,14 @@ async function test(name, fn) {
   try { await fn(); passed++; console.log("✓", name); } catch (e) { console.error("✗", name, "\n   ", e.message); process.exitCode = 1; }
 }
 
-const G = "tarjuman-gaza-01";
+const G = "obai-01";
 const admin = await session(G, "admin");
-const teacher = await session(G, "gaza.teacher1");
+// المراحل 1–3 تملأ «حلقة الفجر» حتى سعتها الافتراضية (15)؛ نرفع السعة كي لا تعتمد هذه المرحلة على ترتيب ما سبقها.
+{
+  const cur = (await call("/api/settings", { cookie: admin })).data.settings;
+  assert.equal((await call("/api/settings", { method: "PUT", cookie: admin, body: { ...cur, maxStudentsPerCircle: 60 } })).status, 200);
+}
+const teacher = await session(G, "obai.teacher1");
 const circles = (await call("/api/circles", { cookie: admin })).data.circles;
 // حلقة المعلّم نفسه لا أوّل حلقة ذكور: البذرة فيها أكثر من حلقة ذكور (إحداها لمدير المرحلة)،
 // واختبار الإشعار أدناه يتطلب أن يكون `teacher` هو معلّم هذه الحلقة.
@@ -37,7 +42,8 @@ const female = circles.find((c) => c.category === "female" && c.active);
 const stamp = Date.now().toString().slice(-7);
 // أرقام هوية فريدة لكل تشغيل (9 أرقام)
 const nid = (n) => "7" + stamp + String(n);
-const waPhone = "0599" + stamp.slice(0, 6);
+const ph = (n) => "0599" + stamp.slice(0, 5) + n; // 10 خانات بالضبط كما يشترط PHONE_RE
+const waPhone = ph(0);
 const guardianNid = "6" + stamp + "0";
 
 const guardianData = (over = {}) => ({ name: "أب الاختبار", relation: "father", callPhone: waPhone, waCc: "970", waNational: waPhone, nationalId: "", ...over });
@@ -53,7 +59,7 @@ let importedIds = [];
 let importGuardianId = "";
 
 await test("إضافة طالب بولي أمر جديد وبلا حلقة (الحلقة اختيارية)", async () => {
-  const body = { name: "طالب بلا حلقة للاختبار", nationalId: nid(1), birth: "2012-03-04", gender: "male", circleId: null, guardian: guardianData({ waNational: waPhone + "1", callPhone: waPhone + "1" }) };
+  const body = { name: "طالب بلا حلقة للاختبار", nationalId: nid(1), birth: "2012-03-04", gender: "male", circleId: null, guardian: guardianData({ waNational: ph(1), callPhone: ph(1) }) };
   const r = await call("/api/students", { method: "POST", cookie: admin, body });
   assert.equal(r.status, 201, JSON.stringify(r.data));
   manualStudentId = r.data.id;
@@ -63,7 +69,7 @@ await test("إضافة طالب بولي أمر جديد وبلا حلقة (ال
   assert.equal(one.userId, null, "لا حساب للطالب");
   assert.equal(one.guardians.length, 1);
   assert.equal(one.guardians[0].hasAccount, false, "ولي الأمر بلا حساب — اختياري");
-  assert.equal(one.guardians[0].callPhone, waPhone + "1");
+  assert.equal(one.guardians[0].callPhone, ph(1));
 });
 
 await test("بيانات ولي الأمر إجبارية: الطالب بلا ولي يُرفض", async () => {
@@ -90,7 +96,7 @@ await test("إضافة ولي أمر جديد بالبيانات نفسها لا
   const before = (await call("/api/guardians", { cookie: admin })).data.guardians.length;
   const r = await call("/api/students", {
     method: "POST", cookie: admin,
-    body: { name: "ثالث الإخوة اختبار", nationalId: nid(4), birth: "2014-03-04", gender: "male", guardian: guardianData({ waNational: waPhone + "1", callPhone: waPhone + "1" }) }
+    body: { name: "ثالث الإخوة اختبار", nationalId: nid(4), birth: "2014-03-04", gender: "male", guardian: guardianData({ waNational: ph(1), callPhone: ph(1) }) }
   });
   assert.equal(r.status, 201, JSON.stringify(r.data));
   assert.equal(r.data.guardianId, manualGuardianId, "نفس الولي وُجد بالواتساب");
@@ -128,7 +134,7 @@ await test("استيراد بلا حلقة (تُوزَّع لاحقاً) وبل�
     body: {
       circleId: null, tempIds: true, createAccounts: false,
       rows: [
-        importRow("طالب بلا حلقة استيراد", "", { guardianNationalId: "", guardianWaNational: waPhone + "9", guardianCallPhone: waPhone + "9", gender: "male" }),
+        importRow("طالب بلا حلقة استيراد", "", { guardianNationalId: "", guardianWaNational: ph(9), guardianCallPhone: ph(9), gender: "male" }),
         importRow("طالب بلا ولي استيراد", nid(8), { guardianName: "", guardianWaNational: "", guardianCallPhone: "", guardianNationalId: "" })
       ]
     }
@@ -173,10 +179,10 @@ await test("حساب الولي بلا رقم هوية يُرفض (لا اسم �
 
 await test("إنشاء ولي مع حساب دفعة واحدة برقم الهوية", async () => {
   const id = "5" + stamp + "1";
-  const r = await call("/api/guardians", { method: "POST", cookie: admin, body: { ...guardianData({ name: "ولي بحساب فوري", nationalId: id, waNational: waPhone + "7", callPhone: waPhone + "7" }), withAccount: true, studentIds: [] } });
+  const r = await call("/api/guardians", { method: "POST", cookie: admin, body: { ...guardianData({ name: "ولي بحساب فوري", nationalId: id, waNational: ph(7), callPhone: ph(7) }), withAccount: true, studentIds: [] } });
   assert.equal(r.status, 201, JSON.stringify(r.data));
   await session(G, id, id);
-  const dup = await call("/api/guardians", { method: "POST", cookie: admin, body: { ...guardianData({ name: "ولي مكرر الهوية", nationalId: id, waNational: waPhone + "6", callPhone: waPhone + "6" }), withAccount: false, studentIds: [] } });
+  const dup = await call("/api/guardians", { method: "POST", cookie: admin, body: { ...guardianData({ name: "ولي مكرر الهوية", nationalId: id, waNational: ph(6), callPhone: ph(6) }), withAccount: false, studentIds: [] } });
   assert.equal(dup.status, 409, "الهوية فريدة");
 });
 
@@ -216,12 +222,12 @@ await test("تسجيل غياب يُشعر ولي الأمر (بحسابه)", as
 });
 
 await test("تعديل بيانات ولي الأمر ورقماه المنفصلان", async () => {
-  const r = await call(`/api/guardians/${manualGuardianId}`, { method: "PATCH", cookie: admin, body: { callPhone: "0591112222", waCc: "962", waNational: "0791234567" } });
+  const r = await call(`/api/guardians/${manualGuardianId}`, { method: "PATCH", cookie: admin, body: { callPhone: "0591112222", waCc: "972", waNational: "0561234567" } });
   assert.equal(r.status, 200, JSON.stringify(r.data));
   const g = (await call("/api/guardians", { cookie: admin })).data.guardians.find((x) => x.id === manualGuardianId);
   assert.equal(g.callPhone, "0591112222");
-  assert.equal(g.waCc, "962");
-  assert.equal(g.waNational, "0791234567");
+  assert.equal(g.waCc, "972");
+  assert.equal(g.waNational, "0561234567");
 });
 
 await test("تعديل أبناء ولي الأمر وإيقاف حسابه", async () => {

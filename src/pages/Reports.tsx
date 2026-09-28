@@ -1,17 +1,19 @@
 import { useState } from "react";
 import type { Direction } from "@shared/constants";
-import { completedJuz, countPages, isValidRange, planPercent, type Position } from "@shared/quran";
+import { countPages, isValidRange, planPercent, type Position } from "@shared/quran";
 import { PositionPicker } from "../components/PositionPicker";
 import { Sheet, useAction, useUi } from "../components/ui";
 import { api } from "../lib/api";
 import { fmtPosPage, monthIso } from "../lib/format";
 import { useFetch } from "../lib/hooks";
+import { downloadXlsx } from "../lib/xlsx-write";
 import { useMe } from "../lib/session";
 import type { Circle } from "../lib/types";
 
 interface Row {
   studentId: string; name: string; direction: Direction; planPages: number; present: number; late: number; absent: number; excused: number;
-  verses: number; pages: number; start: Position | null; end: Position | null; juz: number; percent: number; saved: boolean;
+  verses: number; pages: number; start: Position | null; end: Position | null; percent: number; saved: boolean;
+  reviewPages: number; reviewPlanPages: number; reviewPercent: number; reviewDays: number; pending?: boolean;
 }
 interface Report { month: string; circleId: string | null; circleName: string | null; locked: boolean; message: string; openDay: number; rows: Row[] }
 
@@ -37,14 +39,24 @@ export function Reports() {
   const view = (r: Row) => {
     const end = edits[r.studentId] ?? r.end;
     const pages = edits[r.studentId] && r.start ? countPages(r.direction, r.start, edits[r.studentId]) : r.pages;
-    return { end, pages, percent: planPercent(pages, r.planPages), juz: end ? completedJuz(r.direction, end) : r.juz };
+    return { end, pages, percent: planPercent(pages, r.planPages) };
   };
 
   const save = async () => {
     if (!data) return;
-    const rows = data.rows.filter((r) => (edits[r.studentId] ?? r.end)).map((r) => ({ studentId: r.studentId, end: (edits[r.studentId] ?? r.end)! }));
+    const rows = data.rows.filter((r) => (edits[r.studentId] ?? r.end) || r.reviewDays > 0)
+      .map((r) => ({ studentId: r.studentId, end: edits[r.studentId] ?? r.end }));
     if (!rows.length) return toast("لا توجد بيانات للحفظ في هذا الشهر", "err");
     if (await run(() => api("/api/reports/save", { method: "POST", body: { month, rows } }), "تم حفظ الكشف الشهري")) { setEdits({}); void report.reload(); }
+  };
+
+  const exportExcel = () => {
+    if (!data) return;
+    downloadXlsx(`الكشف-الشهري-${month}`, ["الطالب", "الحضور", "التأخر", "الغياب", "بعذر", "بداية الحفظ", "نهاية الحفظ", "صفحات الحفظ", "خطة الحفظ", "إنجاز الحفظ %", "أيام المراجعة", "صفحات المراجعة", "خطة المراجعة", "إنجاز المراجعة %"],
+      data.rows.map((r) => {
+        const v = view(r);
+        return [r.name, r.present, r.late, r.absent, r.excused, r.start && v.pages ? fmtPosPage(r.start) : "", v.end && v.pages ? fmtPosPage(v.end) : "", v.pages, r.planPages, v.percent, r.reviewDays, r.reviewPages, r.reviewPlanPages, r.reviewPercent];
+      }), "الكشف الشهري");
   };
 
   return (
@@ -60,6 +72,7 @@ export function Reports() {
       </div>
       {report.error && <div className="error-box">{report.error}</div>}
       {data?.locked && <div className="card" style={{ background: "var(--gold-soft)" }}>{data.message}</div>}
+      {data && !data.locked && data.rows.length > 0 && <div className="actions"><button className="btn ghost small" type="button" onClick={exportExcel}>تصدير الكشف Excel</button></div>}
       <div className="list">
         {data?.rows.map((r) => {
           const v = view(r);
@@ -67,17 +80,21 @@ export function Reports() {
             <div key={r.studentId} className="card">
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <b style={{ flex: 1 }}>{r.name}</b>
-                {r.saved && !edits[r.studentId] && <span className="chip">محفوظ</span>}
+                {r.saved && !r.pending && !edits[r.studentId] && <span className="chip">محفوظ</span>}
                 {edits[r.studentId] && <span className="chip gold">معدَّل</span>}
-                <span className="chip">{v.juz} جزءاً</span>
+                {r.pending && <span className="chip gold">بانتظار المزامنة</span>}
               </div>
               <div className="muted" style={{ fontSize: ".9rem" }}>
-                {r.start ? `${fmtPosPage(r.start)} ← ${fmtPosPage(v.end)}` : "لا تسميع مسجَّل هذا الشهر"}
+                {r.start && v.end && v.pages > 0 ? `الحفظ: ${fmtPosPage(r.start)} ← ${fmtPosPage(v.end)}` : "لا حفظ جديد مسجَّل هذا الشهر"}
               </div>
               <div className="muted" style={{ fontSize: ".85rem" }}>حضور {r.present} · تأخر {r.late} · غياب {r.absent} · بعذر {r.excused} · {r.verses} آية</div>
               <div style={{ marginTop: 6 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".88rem" }}><span>{v.pages} من {r.planPages} صفحة</span><b>{v.percent}%</b></div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".88rem" }}><span>الحفظ: {v.pages} من {r.planPages} صفحة</span><b>{v.percent}%</b></div>
                 <div style={{ height: 8, borderRadius: 4, background: "var(--line)", overflow: "hidden" }}><div style={{ height: "100%", width: `${Math.min(100, v.percent)}%`, background: v.percent >= 100 ? "var(--ok)" : "var(--green-2)" }} /></div>
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".88rem" }}><span>المراجعة: {r.reviewPages} من {r.reviewPlanPages} صفحة · {r.reviewDays} يوم</span><b>{r.reviewPercent}%</b></div>
+                <div className="progress"><i style={{ width: `${Math.min(100, r.reviewPercent)}%` }} /></div>
               </div>
               {canSave && r.start && <button className="btn ghost small" type="button" style={{ marginTop: 8 }} onClick={() => setEditing(r)}>تعديل نهاية الحفظ</button>}
             </div>

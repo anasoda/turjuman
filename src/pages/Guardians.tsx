@@ -6,6 +6,9 @@ import { Field, Icons, Sheet, useAction, useUi } from "../components/ui";
 import { api } from "../lib/api";
 import { useDebounced, useFetch, useWantsNew } from "../lib/hooks";
 import type { Guardian, GuardianInput, Student } from "../lib/types";
+import { useMe } from "../lib/session";
+
+import { Link, useSearchParams } from "react-router-dom";
 
 interface OrphanStudent { id: string; name: string }
 
@@ -14,10 +17,13 @@ interface OrphanStudent { id: string; name: string }
  * اسم المستخدم وكلمة المرور الأولية = رقم هوية ولي الأمر، ولا إجبار على تغييرها (§15.8).
  */
 export function Guardians() {
-  const [q, setQ] = useState("");
+  const { user } = useMe();
+  const teacher = user.role === "teacher";
+  const [searchParams] = useSearchParams();
+  const [q, setQ] = useState(searchParams.get("q") ?? "");
   const dq = useDebounced(q);
   const list = useFetch<{ guardians: Guardian[] }>(`/api/guardians${dq ? `?q=${encodeURIComponent(dq)}` : ""}`);
-  const orphans = useFetch<{ students: OrphanStudent[] }>("/api/guardians/orphans");
+  const orphans = useFetch<{ students: OrphanStudent[] }>(teacher ? "" : "/api/guardians/orphans");
   const wantsNew = useWantsNew();
   const [form, setForm] = useState(wantsNew);
   const [detail, setDetail] = useState<Guardian | null>(null);
@@ -29,7 +35,7 @@ export function Guardians() {
         <div><h1>أولياء الأمور</h1><p>لكل طالب ولي أمر واحد، ولولي الأمر عدة أبناء</p></div>
       </div>
 
-      {!!orphans.data?.students.length && (
+      {!teacher && !!orphans.data?.students.length && (
         <section className="card">
           <h3>طلاب بلا ولي أمر مسجَّل</h3>
           <small className="muted">أضف ولي أمر ثم اختر أبناءه من قائمة الطلاب.</small>
@@ -64,10 +70,10 @@ export function Guardians() {
         {!list.loading && !list.data?.guardians.length && <div className="empty">لا يوجد أولياء أمور بعد.</div>}
       </div>
 
-      <button className="fab" type="button" onClick={() => setForm(true)}>{Icons.plus}إضافة ولي أمر</button>
+      {!teacher && <button className="fab" type="button" onClick={() => setForm(true)}>{Icons.plus}إضافة ولي أمر</button>}
 
       {form && <GuardianForm onClose={() => setForm(false)} onSaved={() => { setForm(false); refresh(); }} />}
-      {detail && <GuardianDetail g={detail} onClose={() => setDetail(null)} onChanged={() => { setDetail(null); refresh(); }} />}
+      {detail && <GuardianDetail g={detail} teacher={teacher} onClose={() => setDetail(null)} onChanged={() => { setDetail(null); refresh(); }} />}
     </main>
   );
 }
@@ -135,7 +141,7 @@ function GuardianForm({ onClose, onSaved }: { onClose: () => void; onSaved: () =
 }
 
 /* ------------------------------ تفاصيل ولي الأمر ------------------------------ */
-function GuardianDetail({ g, onClose, onChanged }: { g: Guardian; onClose: () => void; onChanged: () => void }) {
+function GuardianDetail({ g, teacher, onClose, onChanged }: { g: Guardian; teacher: boolean; onClose: () => void; onChanged: () => void }) {
   const { busy, run } = useAction();
   const { confirm } = useUi();
   const [mode, setMode] = useState<"" | "children" | "password" | "edit">("");
@@ -201,15 +207,21 @@ function GuardianDetail({ g, onClose, onChanged }: { g: Guardian; onClose: () =>
       <h3 style={{ marginBottom: 4 }}>الأبناء</h3>
       {g.children.length ? (
         <div className="list" style={{ gap: 4 }}>
-          {g.children.map((k) => <div key={k.id} className="muted">{k.name} — {k.circleName ?? "بلا حلقة"}{k.archived ? " (مؤرشف)" : ""}</div>)}
+          {g.children.map((k) => (
+            <Link key={k.id} to={`/app/students?q=${encodeURIComponent(k.name)}`} style={{ textDecoration: "none" }} onClick={onClose}>
+              <div className="muted" style={{ padding: "8px", borderRadius: "8px", background: "var(--panel)" }}>
+                {k.name} — {k.circleName ?? "بلا حلقة"}{k.archived ? " (مؤرشف)" : ""}
+              </div>
+            </Link>
+          ))}
         </div>
       ) : <p className="muted">لا أبناء مرتبطون.</p>}
       <div className="actions">
-        <button className="btn small" type="button" onClick={() => setMode("children")}>تعديل الأبناء</button>
+        {!teacher && <button className="btn small" type="button" onClick={() => setMode("children")}>تعديل الأبناء</button>}
         <button className="btn ghost small" type="button" onClick={() => setMode("edit")}>تعديل البيانات</button>
-        {!g.hasAccount && <button className="btn small" type="button" disabled={busy} onClick={() => void createAccount()}>إنشاء حساب دخول</button>}
-        {g.hasAccount && <button className="btn ghost small" type="button" onClick={() => setMode("password")}>كلمة مرور جديدة</button>}
-        {g.hasAccount && (
+        {!teacher && !g.hasAccount && <button className="btn small" type="button" disabled={busy} onClick={() => void createAccount()}>إنشاء حساب دخول</button>}
+        {!teacher && g.hasAccount && <button className="btn ghost small" type="button" onClick={() => setMode("password")}>كلمة مرور جديدة</button>}
+        {!teacher && g.hasAccount && (
           <button className={`btn ghost small ${g.active ? "danger" : ""}`} type="button" disabled={busy} onClick={async () => {
             if (g.active && !(await confirm({ title: "إيقاف الحساب", message: "لن يستطيع ولي الأمر الدخول حتى تُعيد تفعيله.", confirmLabel: "إيقاف", danger: true }))) return;
             if (await run(() => api(`/api/guardians/${g.id}/active`, { method: "POST", body: { active: !g.active } }), g.active ? "أُوقف الحساب" : "أُعيد تفعيل الحساب")) onChanged();

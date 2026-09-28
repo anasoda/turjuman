@@ -114,11 +114,15 @@ scheduleRoutes.get("/", requireAuth(), async (c) => {
   return c.json({ entries: results });
 });
 
-scheduleRoutes.put("/:circleId", requireAuth("admin", "secretary"), async (c) => {
+scheduleRoutes.put("/:circleId", requireAuth("admin", "secretary", "teacher"), async (c) => {
   const auth = c.get("auth");
   const circleId = c.req.param("circleId");
   const circle = await c.env.DB.prepare("SELECT id FROM circles WHERE id = ? AND center_id = ?").bind(circleId, auth.centerId).first();
   if (!circle) fail(404, "الحلقة غير موجودة");
+  if (auth.role === "teacher") {
+    const own = await c.env.DB.prepare("SELECT 1 FROM circle_teachers WHERE circle_id = ? AND teacher_id = ?").bind(circleId, auth.userId).first();
+    if (!own) fail(404, "الحلقة غير موجودة");
+  }
   const b = await parseBody(c, scheduleSchema);
   await c.env.DB.batch([
     c.env.DB.prepare("DELETE FROM circle_schedule WHERE circle_id = ?").bind(circleId),
@@ -210,8 +214,9 @@ noteRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_manager
 
 noteRoutes.delete("/:id", requireAuth("admin", "secretary", "teacher", "stage_manager"), async (c) => {
   const auth = c.get("auth");
-  const n = await c.env.DB.prepare("SELECT id, author_id AS authorId FROM student_notes WHERE id = ? AND center_id = ?").bind(c.req.param("id"), auth.centerId).first<{ id: string; authorId: string }>();
+  const n = await c.env.DB.prepare("SELECT id, student_id AS studentId, author_id AS authorId FROM student_notes WHERE id = ? AND center_id = ?").bind(c.req.param("id"), auth.centerId).first<{ id: string; studentId: string; authorId: string }>();
   if (!n) fail(404, "الملاحظة غير موجودة");
+  await accessibleStudent(c, n.studentId);
   if (auth.role === "teacher" && n.authorId !== auth.userId) fail(403, "يمكنك حذف ملاحظاتك فقط");
   await c.env.DB.prepare("DELETE FROM student_notes WHERE id = ?").bind(n.id).run();
   return c.json({ ok: true });
@@ -290,6 +295,9 @@ statsRoutes.get("/students", requireAuth("admin", "secretary", "stage_manager", 
             (SELECT COUNT(*) FROM daily_records d WHERE d.student_id = s.id AND d.attendance IN ('present', 'late')) AS present,
             (SELECT COUNT(*) FROM daily_records d WHERE d.student_id = s.id AND d.attendance = 'absent') AS absent,
             (SELECT COALESCE(SUM(pages), 0) FROM daily_records d WHERE d.student_id = s.id) AS pages,
+            (SELECT COALESCE(SUM(review_pages), 0) FROM daily_records d WHERE d.student_id = s.id) AS reviewPages,
+            (SELECT d.review_to_surah FROM daily_records d WHERE d.student_id = s.id AND d.review_to_surah IS NOT NULL ORDER BY d.date DESC LIMIT 1) AS reviewSurah,
+            (SELECT d.review_to_ayah FROM daily_records d WHERE d.student_id = s.id AND d.review_to_surah IS NOT NULL ORDER BY d.date DESC LIMIT 1) AS reviewAyah,
             (SELECT COUNT(*) FROM tests t WHERE t.student_id = s.id AND t.status = 'completed') AS tests
        FROM students s LEFT JOIN circles ci ON ci.id = s.circle_id WHERE s.center_id = ? AND s.archived_at IS NULL${scope.sql} ORDER BY s.name`
   ).bind(auth.centerId, ...scope.binds).all<{ direction: string; lastSurah: number; lastAyah: number }>();
@@ -318,22 +326,30 @@ exportRoutes.get("/", requireAuth("admin"), async (c) => {
   const data = {
     exportedAt: new Date().toISOString(),
     centerId: auth.centerId,
-    center: (await c.env.DB.prepare("SELECT id, name, subtitle, phone, whatsapp FROM centers WHERE id = ?").bind(auth.centerId).first()) ?? null,
+    center: (await c.env.DB.prepare("SELECT * FROM centers WHERE id = ?").bind(auth.centerId).first()) ?? null,
     settings: await q("SELECT key, value_json AS value FROM center_settings WHERE center_id = ?"),
     // لا تُصدَّر كلمات المرور ولا تجزئتها أبداً
-    users: await q("SELECT id, role, username, display_name AS displayName, active FROM users WHERE center_id = ?"),
+    users: await q("SELECT id, center_id, role, username, display_name, active, created_at, updated_at FROM users WHERE center_id = ?"),
     staffProfiles: await q("SELECT p.* FROM staff_profiles p JOIN users u ON u.id = p.user_id WHERE u.center_id = ?"),
+    stageManagers: await q("SELECT * FROM stage_managers WHERE center_id = ?"),
     circles: await q("SELECT * FROM circles WHERE center_id = ?"),
     circleTeachers: await q("SELECT ct.* FROM circle_teachers ct JOIN circles c ON c.id = ct.circle_id WHERE c.center_id = ?"),
-    students: await q("SELECT id, user_id, national_id, name, birth, gender, circle_id, direction, memorized_parts, last_surah, last_ayah, ajkam_course, monthly_plan_pages, joined_at, archived_at, archive_reason FROM students WHERE center_id = ?"),
+    students: await q("SELECT * FROM students WHERE center_id = ?"),
+    guardians: await q("SELECT * FROM guardians WHERE center_id = ?"),
     dailyRecords: await q("SELECT * FROM daily_records WHERE center_id = ?"),
     sardRecords: await q("SELECT * FROM sard_records WHERE center_id = ?"),
     tests: await q("SELECT * FROM tests WHERE center_id = ?"),
     monthlyReports: await q("SELECT * FROM monthly_reports WHERE center_id = ?"),
     ajkamCourses: await q("SELECT * FROM ajkam_courses WHERE center_id = ?"),
+    courseStudents: await q("SELECT cs.* FROM ajkam_course_students cs JOIN ajkam_courses ac ON ac.id = cs.course_id WHERE ac.center_id = ?"),
+    notifications: await q("SELECT * FROM notifications WHERE center_id = ?"),
+    announcements: await q("SELECT * FROM announcements WHERE center_id = ?"),
     absenceNotices: await q("SELECT * FROM absence_notices WHERE center_id = ?"),
+    prayerTimes: await q("SELECT * FROM prayer_times WHERE center_id = ?"),
     staffAttendance: await q("SELECT * FROM staff_attendance WHERE center_id = ?"),
-    schedule: await q("SELECT * FROM circle_schedule WHERE center_id = ?")
+    schedule: await q("SELECT * FROM circle_schedule WHERE center_id = ?"),
+    studentNotes: await q("SELECT * FROM student_notes WHERE center_id = ?"),
+    auditLog: await q("SELECT * FROM audit_log WHERE center_id = ?")
   };
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "export", entity: "center" });
   return c.json(data);

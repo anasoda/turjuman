@@ -7,6 +7,9 @@ export interface Env {
   JWT_SECRET: string;
   /** مفتاح مالك النظام لإنشاء المراكز — يُضبط بـ wrangler secret */
   ADMIN_BOOTSTRAP_KEY: string;
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
+  VAPID_SUBJECT?: string;
 }
 
 export interface AuthCtx {

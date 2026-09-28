@@ -1,6 +1,6 @@
 // بيانات تجريبية للتطوير المحلي فقط. يتطلب تشغيل الخادم: npm run dev:api
 // الاستخدام: npm run db:seed:local
-// يُنشئ مركزين (turjuman-gaza-01, turjuman-rafah-02) وحسابات وحلقات وطلاباً عبر الـ API نفسه،
+// يُنشئ مركزين (obai-01, test-center-02) وحسابات وحلقات وطلاباً عبر الـ API نفسه،
 // فيمرّ كل شيء عبر نفس التحقق والصلاحيات.
 
 const BASE = process.env.API_BASE || "http://127.0.0.1:8787";
@@ -78,7 +78,7 @@ async function seedCenter(centerId, centerName, prefix) {
   if (c2.data.id && wali2.data.id) await must("طالبة 3", call("/api/students", { method: "POST", cookie, body: student(3, "ليان محمود سعيد عوض", "female", c2.data.id, "descending", 87, 5, 10, wali2.data.id) }));
 }
 
-await seedCenter("tarjuman-gaza-01", "مركز ترجمان القرآن", "gaza");
-await seedCenter("tarjuman-rafah-02", "مركز الفرقان لتحفيظ القرآن", "rafah");
+await seedCenter("obai-01", "مركز أبي بن كعب", "obai");
+await seedCenter("test-center-02", "مركز الفرقان لتحفيظ القرآن", "other");
 console.log(`\nتم. كل الحسابات كلمة مرورها: ${PASSWORD}`);
-console.log("مثال: admin / gaza.teacher1 / gaza.secretary / gaza.committee / gaza.stage1 / gaza.student1 / 801000001 (ولي أمر بحساب: اسم المستخدم = كلمة المرور = رقم هويته)  — مركز tarjuman-gaza-01");
+console.log("مثال: admin / obai.teacher1 / obai.secretary / obai.committee / obai.stage1 / 801000001 (ولي أمر بحساب: اسم المستخدم = كلمة المرور = رقم هويته)  — مركز obai-01");

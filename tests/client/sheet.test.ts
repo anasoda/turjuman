@@ -7,6 +7,7 @@ import {
   parseCsvText,
   parseSharedStrings,
   sheetXmlToRows,
+  templateCsv,
   toDirection,
   toGender,
   toIsoDate,
@@ -14,6 +15,14 @@ import {
 } from "../../src/lib/sheet";
 
 describe("قراءة CSV", () => {
+  it("يعطي نموذجًا فارغًا للحقول الأساسية دون بيانات مثال أو خطة شهرية أو تاريخ انتساب", () => {
+    const rows = parseCsvText(templateCsv());
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("اسم ولي الأمر");
+    expect(rows[0]).not.toContain("الخطة الشهرية (صفحات)");
+    expect(rows[0]).not.toContain("تاريخ الانتساب");
+  });
+
   it("يقبل BOM والأقواس والفاصلة المنقوطة", () => {
     const rows = parseCsvText('﻿الاسم;رقم الهوية\n"محمد أحمد سعيد علي";401234567\n');
     expect(rows).toEqual([
@@ -132,9 +141,18 @@ describe("بناء صفوف الاستيراد", () => {
   });
 
   it("مقدمة الواتساب من العمود إن وُجد", () => {
-    const data = [["الاسم الرباعي", "اسم ولي الأمر", "مقدمة الواتساب", "رقم الواتساب"], ["محمد أحمد سعيد علي", "أحمد", "962", "0791234567"]];
+    const data = [["الاسم الرباعي", "اسم ولي الأمر", "مقدمة الواتساب", "رقم الواتساب"], ["محمد أحمد سعيد علي", "أحمد", "972", "0541234567"]];
     const built = buildImportRows(data, detectMapping(data[0], true), { header: true, defaultDirection: "descending", defaultPlan: 10 });
-    expect(built[0].student).toMatchObject({ guardianWaCc: "962", guardianWaNational: "0791234567" });
+    expect(built[0].student).toMatchObject({ guardianWaCc: "972", guardianWaNational: "0541234567" });
+  });
+
+  it("المقدمة تُطبَّع (+972 و00972 ← 972) وغير 970/972 تُرفض قبل الرفع", () => {
+    const rows = (cc: string) => [["الاسم الرباعي", "تاريخ الميلاد", "اسم ولي الأمر", "مقدمة الواتساب", "رقم الواتساب"], ["محمد أحمد سعيد علي", "2012-05-04", "أحمد سعيد", cc, "0541234567"]];
+    const build = (cc: string) => buildImportRows(rows(cc), detectMapping(rows(cc)[0], true), { header: true, defaultDirection: "descending", defaultPlan: 10 })[0];
+    expect(build("+972").student.guardianWaCc).toBe("972");
+    expect(build("00972").student.guardianWaCc).toBe("972");
+    expect(build("972").problem).toBe("");
+    expect(build("962").problem).toBe("مقدمة الواتساب المسموحة 970 أو 972 فقط");
   });
 
   it("بلا عناوين يستعمل الترتيب الافتراضي", () => {
@@ -145,5 +163,26 @@ describe("بناء صفوف الاستيراد", () => {
     expect(built[0].line).toBe(1);
     expect(built[0].student.direction).toBe("ascending");
     expect(built[0].student.monthlyPlanPages).toBe(5);
+  });
+
+  it("يقرأ عناوين وتواريخ الكشف المرسل دون إضاعة رقم واتساب ولي الأمر", () => {
+    const data = [
+      ["الاسم   الرباعي", "رقم الهوية", "تاريخ الميلاد", "الجنس", "جوال الطالب", "اسم ولي الأمر", "جوال ولي الأمر (واتساب)", "اتجاه الحفظ", "آخر سورة", "آخر آية", "الخطة الشهرية (صفحات)", "دورة الأحكام", "تاريخ الانتساب"],
+      ["محمد أحمد سعيد عبد   الله", "401234567", "14 05 2012", "ذكر", "591234567", "أحمد سعيد عبد الله", "599876543", "من الناس إلى الفاتحة", "الناس", "6", "10", "", "1 09 2026"]
+    ];
+    const built = buildImportRows(data, detectMapping(data[0], true), { header: true, defaultDirection: "descending", defaultPlan: 10, tempIds: false });
+    expect(built[0].problem).toBe("");
+    expect(built[0].student).toMatchObject({
+      birth: "2012-05-14", joinedAt: "2026-09-01", phoneNational: "591234567",
+      guardianWaNational: "599876543", guardianCallPhone: "599876543"
+    });
+  });
+
+  it("يعرض نقص الهوية والجنس قبل رفع الكشف بحسب خيارات الاستيراد", () => {
+    const data = [["الاسم الرباعي", "تاريخ الميلاد", "اسم ولي الأمر", "رقم الاتصال"], ["محمد أحمد سعيد علي", "2012-05-04", "أحمد سعيد", "0599876543"]];
+    const mapping = detectMapping(data[0], true);
+    const options = { header: true, defaultDirection: "descending" as const, defaultPlan: 10, requireGender: true };
+    expect(buildImportRows(data, mapping, { ...options, tempIds: false })[0].problem).toContain("رقم الهوية");
+    expect(buildImportRows(data, mapping, { ...options, tempIds: true })[0].problem).toContain("الجنس");
   });
 });
