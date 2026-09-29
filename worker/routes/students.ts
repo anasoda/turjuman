@@ -6,7 +6,9 @@ import { requireAuth } from "../lib/auth";
 import { createPasswordRecord, newId } from "../lib/crypto";
 import { audit, fail, loadSettings, parseBody } from "../lib/util";
 import { partsOf } from "../lib/parts";
-import { todayHebron } from "../lib/dates";
+import { SURAHS } from "../../shared/quran-data";
+import { canEditMonthlyPlan } from "../../shared/monthly-plan";
+import { MONTH_RE, monthOf, todayHebron } from "../lib/dates";
 import { planTransfer } from "../lib/transfers";
 import { assertStageCircle, stageCircleSql, stagesOf, teacherCircleIds } from "../lib/access";
 import { findOrCreateGuardian, guardianFields } from "./guardians";
@@ -26,6 +28,8 @@ const studentFields = {
   memorizedParts: z.number().int().min(0).max(30).optional(),
   lastSurah: z.number().int().min(1).max(114).optional(),
   lastAyah: z.number().int().min(0).max(286).default(0),
+  reviewStartSurah: z.number().int().min(1).max(114).nullable().default(null),
+  reviewStartAyah: z.number().int().min(1).max(286).nullable().default(null),
   ajkamCourse: z.enum(AJKAM_COURSES).or(z.literal("")).default(""),
   monthlyPlanPages: z.number().int().min(0).max(604).default(0),
   monthlyReviewPlanPages: z.number().int().min(0).max(604).default(0),
@@ -41,30 +45,46 @@ const createSchema = z.object({
   ...studentFields,
   guardianId: z.string().min(1).optional(),
   guardian: z.object(guardianFields).optional()
-}).refine((b) => !!b.guardianId || !!b.guardian, { message: "بيانات ولي الأمر مطلوبة: اختر ولياً موجوداً أو أضف جديداً", path: ["guardian"] });
+}).refine((b) => !!b.guardianId || !!b.guardian, { message: "بيانات ولي الأمر مطلوبة: اختر ولياً موجوداً أو أضف جديداً", path: ["guardian"] })
+  .refine((b) => validReviewStart(b.reviewStartSurah, b.reviewStartAyah), { message: "موضع المراجعة غير صالح", path: ["reviewStartAyah"] });
 
 // المعلّم يعدّل فقط ما يخص المتابعة اليومية؛ الإداريون يعدّلون كل شيء
-const TEACHER_EDITABLE = ["direction", "memorizedParts", "lastSurah", "lastAyah", "ajkamCourse", "monthlyPlanPages", "monthlyReviewPlanPages"] as const;
-const updateSchema = z.object(studentFields).partial();
+const TEACHER_EDITABLE = ["direction", "memorizedParts", "lastSurah", "lastAyah", "reviewStartSurah", "reviewStartAyah", "ajkamCourse", "monthlyPlanPages", "monthlyReviewPlanPages"] as const;
+const updateSchema = z.object(studentFields).partial().refine((b) => {
+  if (b.reviewStartSurah === undefined && b.reviewStartAyah === undefined) return true;
+  if (b.reviewStartSurah === undefined || b.reviewStartAyah === undefined) return false;
+  return validReviewStart(b.reviewStartSurah ?? null, b.reviewStartAyah ?? null);
+}, { message: "حدد السورة والآية معاً لموضع المراجعة", path: ["reviewStartAyah"] });
+function validReviewStart(surah: number | null, ayah: number | null) {
+  return (surah === null && ayah === null) ||
+    (surah !== null && ayah !== null && ayah <= (SURAHS[surah - 1]?.[1] ?? 0));
+}
 const archiveSchema = z.object({ reason: z.string().trim().min(2, "اكتب سبب الأرشفة").max(200) });
 const moveSchema = z.object({ circleId: z.string().min(1), reason: z.string().trim().max(200).default("") });
 
-const SELECT_STUDENTS = `
+const SELECT_STUDENTS = () => {
+  const month = monthOf(todayHebron());
+  return `
   SELECT s.id, s.user_id AS userId, s.national_id AS nationalId, s.name, s.birth, s.gender, s.circle_id AS circleId,
          c.name AS circleName, s.direction, s.memorized_parts AS memorizedParts, s.last_surah AS lastSurah,
-         s.last_ayah AS lastAyah, s.ajkam_course AS ajkamCourse, s.monthly_plan_pages AS monthlyPlanPages, s.monthly_review_plan_pages AS monthlyReviewPlanPages,
+         s.last_ayah AS lastAyah, s.ajkam_course AS ajkamCourse,
+         COALESCE((SELECT p.memorize_pages FROM student_monthly_plans p WHERE p.student_id = s.id AND p.center_id = s.center_id AND p.month = '${month}'), 0) AS monthlyPlanPages,
+         COALESCE((SELECT p.review_pages FROM student_monthly_plans p WHERE p.student_id = s.id AND p.center_id = s.center_id AND p.month = '${month}'), 0) AS monthlyReviewPlanPages,
          s.phone_cc AS phoneCc, s.phone_national AS phoneNational, s.guardian_id AS guardianId, COALESCE(NULLIF(s.guardian_relation_detail, ''), s.guardian_relation) AS guardianRelation,
-         (SELECT d.review_to_surah FROM daily_records d WHERE d.student_id = s.id AND d.review_to_surah IS NOT NULL ORDER BY d.date DESC LIMIT 1) AS reviewSurah,
-         (SELECT d.review_to_ayah FROM daily_records d WHERE d.student_id = s.id AND d.review_to_surah IS NOT NULL ORDER BY d.date DESC LIMIT 1) AS reviewAyah,
+         COALESCE((SELECT d.review_to_surah FROM daily_records d WHERE d.student_id = s.id AND d.review_to_surah IS NOT NULL ORDER BY d.date DESC LIMIT 1), s.review_start_surah) AS reviewSurah,
+         COALESCE((SELECT d.review_to_ayah FROM daily_records d WHERE d.student_id = s.id AND d.review_to_surah IS NOT NULL ORDER BY d.date DESC LIMIT 1), s.review_start_ayah) AS reviewAyah,
+         s.review_start_surah AS reviewStartSurah, s.review_start_ayah AS reviewStartAyah,
+         EXISTS(SELECT 1 FROM daily_records d WHERE d.student_id = s.id AND d.review_to_surah IS NOT NULL) AS hasReviewRecord,
          (s.photo <> '') AS hasPhoto, s.honor_consent AS honorConsent, s.joined_at AS joinedAt, s.archived_at AS archivedAt, s.archive_reason AS archiveReason,
          u.username, u.active AS accountActive
     FROM students s
     LEFT JOIN circles c ON c.id = s.circle_id
     LEFT JOIN users u ON u.id = s.user_id`;
+};
 
 type StudentRow = Record<string, unknown> & { id: string; circleId: string | null; gender: string; archivedAt: number | null; userId: string | null };
 
-const shape = (r: Record<string, unknown>) => ({ ...r, memorizedParts: partsOf(r as { direction: string; lastSurah: number; lastAyah: number }), accountActive: r.accountActive === 1, hasPhoto: r.hasPhoto === 1, honorConsent: r.honorConsent === 1 });
+const shape = (r: Record<string, unknown>) => ({ ...r, memorizedParts: partsOf(r as { direction: string; lastSurah: number; lastAyah: number }), accountActive: r.accountActive === 1, hasPhoto: r.hasPhoto === 1, honorConsent: r.honorConsent === 1, hasReviewRecord: r.hasReviewRecord === 1 });
 
 function relationBucket(relation: GuardianRelation): "father" | "mother" | "other" {
   return relation === "father" ? "father" : relation === "mother" ? "mother" : "other";
@@ -93,7 +113,7 @@ async function guardiansOf(c: Context<AppEnv>, studentId: string) {
 /** يحمّل الطالب ويتحقق من الملكية: المعلّم لطلاب حلقته، ومدير المرحلة لطلاب حلقات مراحله. */
 async function loadStudent(c: Context<AppEnv>, id: string): Promise<StudentRow> {
   const auth = c.get("auth");
-  const row = await c.env.DB.prepare(`${SELECT_STUDENTS} WHERE s.id = ? AND s.center_id = ?`).bind(id, auth.centerId).first<StudentRow>();
+  const row = await c.env.DB.prepare(`${SELECT_STUDENTS()} WHERE s.id = ? AND s.center_id = ?`).bind(id, auth.centerId).first<StudentRow>();
   if (!row) fail(404, "الطالب غير موجود");
   if (auth.role === "teacher") {
     if (!row.circleId || !teacherCircleIds(c).includes(row.circleId)) fail(404, "الطالب غير موجود");
@@ -154,7 +174,7 @@ studentRoutes.get("/", requireAuth("admin", "secretary", "teacher", "stage_manag
   if (q) { where += " AND (s.name LIKE ? OR s.national_id LIKE ? OR s.phone_national LIKE ?)"; binds.push(`%${q}%`, `%${q}%`, `%${q}%`); }
 
   const total = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM students s WHERE ${where}`).bind(...binds).first<{ n: number }>();
-  const { results } = await c.env.DB.prepare(`${SELECT_STUDENTS} WHERE ${where} ORDER BY s.name LIMIT ? OFFSET ?`)
+  const { results } = await c.env.DB.prepare(`${SELECT_STUDENTS()} WHERE ${where} ORDER BY s.name LIMIT ? OFFSET ?`)
     .bind(...binds, pageSize, (page - 1) * pageSize)
     .all();
   return c.json({ students: results.map(shape), total: total?.n ?? 0, page, pageSize });
@@ -163,7 +183,7 @@ studentRoutes.get("/", requireAuth("admin", "secretary", "teacher", "stage_manag
 /** بطاقة الطالب نفسه (بوابة الطالب). */
 studentRoutes.get("/me", requireAuth("student"), async (c) => {
   const auth = c.get("auth");
-  const row = await c.env.DB.prepare(`${SELECT_STUDENTS} WHERE s.user_id = ? AND s.center_id = ?`).bind(auth.userId, auth.centerId).first();
+  const row = await c.env.DB.prepare(`${SELECT_STUDENTS()} WHERE s.user_id = ? AND s.center_id = ?`).bind(auth.userId, auth.centerId).first();
   if (!row) fail(404, "لا يوجد ملف طالب لهذا الحساب");
   return c.json({ student: { ...shape(row), photo: await photoOf(c, String(row.id)) } });
 });
@@ -350,16 +370,20 @@ studentRoutes.post("/import", requireAuth("admin", "secretary", "teacher", "stag
     room -= 1;
     const lastSurah = r.lastSurah ?? (r.direction === "ascending" ? 1 : 114);
     const pos = { direction: r.direction, lastSurah, lastAyah: r.lastAyah };
+    const importedId = newId();
     stmts.push(
       c.env.DB.prepare(
         `INSERT INTO students (id, center_id, user_id, national_id, name, birth, gender, circle_id, direction, memorized_parts, last_surah, last_ayah,
                                ajkam_course, monthly_plan_pages, phone_cc, phone_national, guardian_id, guardian_relation, guardian_relation_detail, joined_at, created_at, updated_at)
          VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(newId(), auth.centerId, nid, r.name, r.birth, r.gender ?? circle!.category, b.circleId, r.direction, partsOf(pos), lastSurah, r.lastAyah,
+      ).bind(importedId, auth.centerId, nid, r.name, r.birth, r.gender ?? circle!.category, b.circleId, r.direction, partsOf(pos), lastSurah, r.lastAyah,
         (AJKAM_COURSES as readonly string[]).includes(r.ajkamCourse) ? r.ajkamCourse : "", r.monthlyPlanPages,
         r.phoneCc || "970", r.phoneNational, guardianId, relationBucket(r.guardianRelation), r.guardianRelation,
         r.joinedAt || today, now, now)
     );
+    if (r.monthlyPlanPages > 0) stmts.push(c.env.DB.prepare(
+      "INSERT INTO student_monthly_plans (center_id, student_id, month, memorize_pages, review_pages, set_by, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?)"
+    ).bind(auth.centerId, importedId, monthOf(today), r.monthlyPlanPages, auth.userId, now));
     push("added", "");
   }
 
@@ -377,6 +401,41 @@ studentRoutes.post("/import", requireAuth("admin", "secretary", "teacher", "stag
     accountsCreated,
     results
   });
+});
+
+const monthlyPlanSchema = z.object({
+  month: z.string().regex(MONTH_RE, "الشهر غير صالح"),
+  monthlyPlanPages: z.number().int().min(0).max(604),
+  monthlyReviewPlanPages: z.number().int().min(0).max(604)
+});
+
+studentRoutes.get("/:id/plan", requireAuth("admin", "secretary", "teacher", "stage_manager", "exam_committee"), async (c) => {
+  const student = await loadStudent(c, c.req.param("id"));
+  const month = new URL(c.req.url).searchParams.get("month") || monthOf(todayHebron());
+  if (!MONTH_RE.test(month)) fail(400, "الشهر غير صالح");
+  const auth = c.get("auth");
+  const plan = await c.env.DB.prepare(
+    "SELECT memorize_pages AS monthlyPlanPages, review_pages AS monthlyReviewPlanPages FROM student_monthly_plans WHERE center_id = ? AND student_id = ? AND month = ?"
+  ).bind(auth.centerId, student.id, month).first<{ monthlyPlanPages: number; monthlyReviewPlanPages: number }>();
+  return c.json({ month, monthlyPlanPages: plan?.monthlyPlanPages ?? 0, monthlyReviewPlanPages: plan?.monthlyReviewPlanPages ?? 0,
+    editable: canEditMonthlyPlan(todayHebron(), month), set: !!plan });
+});
+
+studentRoutes.put("/:id/plan", requireAuth("admin", "secretary", "teacher", "stage_manager"), async (c) => {
+  const student = await loadStudent(c, c.req.param("id"));
+  const b = await parseBody(c, monthlyPlanSchema);
+  if (!canEditMonthlyPlan(todayHebron(), b.month)) fail(400, "تُضبط خطة الشهر القادم في آخر خمسة أيام من الشهر السابق، أو خلال الشهر الجاري");
+  const auth = c.get("auth");
+  const now = Date.now();
+  await c.env.DB.prepare(
+    `INSERT INTO student_monthly_plans (center_id, student_id, month, memorize_pages, review_pages, set_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(student_id, month) DO UPDATE SET memorize_pages = excluded.memorize_pages, review_pages = excluded.review_pages,
+       set_by = excluded.set_by, updated_at = excluded.updated_at`
+  ).bind(auth.centerId, student.id, b.month, b.monthlyPlanPages, b.monthlyReviewPlanPages, auth.userId, now).run();
+  await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "update", entity: "student", entityId: student.id,
+    details: `monthlyPlan:${b.month}:${b.monthlyPlanPages}/${b.monthlyReviewPlanPages}` });
+  return c.json({ ok: true, month: b.month });
 });
 
 studentRoutes.get("/:id", requireAuth("admin", "secretary", "teacher", "stage_manager", "exam_committee"), async (c) => {
@@ -425,11 +484,14 @@ studentRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_mana
   const pos = { direction: b.direction, lastSurah, lastAyah: b.lastAyah };
   await c.env.DB.prepare(
     `INSERT INTO students (id, center_id, user_id, national_id, name, birth, gender, circle_id, direction, memorized_parts, last_surah, last_ayah,
-                           ajkam_course, monthly_plan_pages, monthly_review_plan_pages, phone_cc, phone_national, guardian_id, guardian_relation, guardian_relation_detail, joined_at, created_at, updated_at)
-     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                           review_start_surah, review_start_ayah, ajkam_course, monthly_plan_pages, monthly_review_plan_pages, phone_cc, phone_national, guardian_id, guardian_relation, guardian_relation_detail, joined_at, created_at, updated_at)
+     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(studentId, auth.centerId, b.nationalId, b.name, b.birth, b.gender, b.circleId, b.direction, partsOf(pos), lastSurah, b.lastAyah,
-    b.ajkamCourse, b.monthlyPlanPages, b.monthlyReviewPlanPages, b.phoneCc || "970", b.phoneNational, guardianId, relationBucket(b.guardianRelation), b.guardianRelation,
+    b.reviewStartSurah, b.reviewStartAyah, b.ajkamCourse, b.monthlyPlanPages, b.monthlyReviewPlanPages, b.phoneCc || "970", b.phoneNational, guardianId, relationBucket(b.guardianRelation), b.guardianRelation,
     b.joinedAt ?? new Date().toISOString().slice(0, 10), now, now).run();
+  if (b.monthlyPlanPages > 0 || b.monthlyReviewPlanPages > 0) await c.env.DB.prepare(
+    "INSERT INTO student_monthly_plans (center_id, student_id, month, memorize_pages, review_pages, set_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).bind(auth.centerId, studentId, monthOf(todayHebron()), b.monthlyPlanPages, b.monthlyReviewPlanPages, auth.userId, now).run();
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "create", entity: "student", entityId: studentId, details: b.name });
   return c.json({ ok: true, id: studentId, guardianId }, 201);
 });
@@ -441,6 +503,11 @@ studentRoutes.patch("/:id", requireAuth("admin", "secretary", "teacher", "stage_
   if (auth.role === "teacher") {
     const forbidden = Object.keys(b).filter((k) => !(TEACHER_EDITABLE as readonly string[]).includes(k));
     if (forbidden.length) fail(403, "يمكنك تعديل بيانات المتابعة فقط (الاتجاه، آخر موضع، الخطة الشهرية)");
+  }
+  if (b.reviewStartSurah !== undefined) {
+    const reviewed = await c.env.DB.prepare("SELECT 1 FROM daily_records WHERE center_id = ? AND student_id = ? AND review_to_surah IS NOT NULL LIMIT 1")
+      .bind(auth.centerId, current.id).first();
+    if (reviewed) fail(400, "بعد تسجيل المراجعة، عدّل موضعها من سجل التسميع");
   }
   // مدير المرحلة يعدّل كالسكرتير لكن لا ينقل الطالب خارج مراحله
   if (auth.role === "stage_manager" && b.circleId !== undefined) await assertStageCircle(c, b.circleId);
@@ -458,12 +525,23 @@ studentRoutes.patch("/:id", requireAuth("admin", "secretary", "teacher", "stage_
   await c.env.DB.prepare(
     `UPDATE students SET national_id = COALESCE(?, national_id), name = COALESCE(?, name), birth = COALESCE(?, birth), gender = COALESCE(?, gender),
             circle_id = COALESCE(?, circle_id), direction = COALESCE(?, direction), memorized_parts = COALESCE(?, memorized_parts),
-            last_surah = COALESCE(?, last_surah), last_ayah = COALESCE(?, last_ayah), ajkam_course = COALESCE(?, ajkam_course),
+            last_surah = COALESCE(?, last_surah), last_ayah = COALESCE(?, last_ayah),
+            review_start_surah = ?, review_start_ayah = ?, ajkam_course = COALESCE(?, ajkam_course),
             monthly_plan_pages = COALESCE(?, monthly_plan_pages), monthly_review_plan_pages = COALESCE(?, monthly_review_plan_pages), phone_cc = COALESCE(?, phone_cc), phone_national = COALESCE(?, phone_national),
             guardian_relation = COALESCE(?, guardian_relation), guardian_relation_detail = COALESCE(?, guardian_relation_detail), joined_at = COALESCE(?, joined_at), updated_at = ? WHERE id = ?`
   ).bind(b.nationalId ?? null, b.name ?? null, b.birth ?? null, b.gender ?? null, b.circleId ?? null, b.direction ?? null, null,
-    b.lastSurah ?? null, b.lastAyah ?? null, b.ajkamCourse ?? null, b.monthlyPlanPages ?? null, b.monthlyReviewPlanPages ?? null, b.phoneCc ?? null, b.phoneNational ?? null,
+    b.lastSurah ?? null, b.lastAyah ?? null, b.reviewStartSurah === undefined ? current.reviewStartSurah : b.reviewStartSurah,
+    b.reviewStartAyah === undefined ? current.reviewStartAyah : b.reviewStartAyah,
+    b.ajkamCourse ?? null, b.monthlyPlanPages ?? null, b.monthlyReviewPlanPages ?? null, b.phoneCc ?? null, b.phoneNational ?? null,
     b.guardianRelation ? relationBucket(b.guardianRelation) : null, b.guardianRelation ?? null, b.joinedAt ?? null, Date.now(), current.id).run();
+  if (b.monthlyPlanPages !== undefined || b.monthlyReviewPlanPages !== undefined) {
+    await c.env.DB.prepare(
+      `INSERT INTO student_monthly_plans (center_id, student_id, month, memorize_pages, review_pages, set_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(student_id, month) DO UPDATE SET
+       memorize_pages = excluded.memorize_pages, review_pages = excluded.review_pages, set_by = excluded.set_by, updated_at = excluded.updated_at`
+    ).bind(auth.centerId, current.id, monthOf(todayHebron()), b.monthlyPlanPages ?? current.monthlyPlanPages,
+      b.monthlyReviewPlanPages ?? current.monthlyReviewPlanPages, auth.userId, Date.now()).run();
+  }
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "update", entity: "student", entityId: current.id, details: Object.keys(b).join(",") });
   return c.json({ ok: true });
 });

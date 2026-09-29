@@ -183,12 +183,17 @@ await test("يدرّس حلقته: يضيف طالباً إليها ويسجّل
     }
   });
   assert.equal(add.status, 201, JSON.stringify(add.data));
-  const rec = await call("/api/daily", {
-    method: "POST", cookie: manager,
-    body: { studentId: add.data.id, date: TODAY, attendance: "present", from: { surah: 114, ayah: 1 }, to: { surah: 114, ayah: 6 }, grade: "", notes: "" }
-  });
+  let rec, validDate = TODAY;
+  for (let i = 0; i < 7; i++) {
+    validDate = new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10);
+    rec = await call("/api/daily", {
+      method: "POST", cookie: manager,
+      body: { studentId: add.data.id, date: validDate, attendance: "present", from: { surah: 114, ayah: 1 }, to: { surah: 114, ayah: 6 }, grade: "", notes: "" }
+    });
+    if (rec.status === 200 || rec.status === 201) break;
+  }
   assert.ok(rec.status === 200 || rec.status === 201, JSON.stringify(rec.data));
-  const board = await call(`/api/daily/board?date=${TODAY}&circleId=${ownCircle.id}`, { cookie: manager });
+  const board = await call(`/api/daily/board?date=${validDate}&circleId=${ownCircle.id}`, { cookie: manager });
   assert.equal(board.status, 200, JSON.stringify(board.data));
   assert.ok(board.data.rows.some((x) => x.student.id === add.data.id && x.record), "لم يظهر السجل في لوحة حلقته");
 });

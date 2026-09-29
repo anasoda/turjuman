@@ -140,7 +140,8 @@ await test("الاختبار الرسمي: اقتراح المحفّظ ← اع�
   assert.equal(done.data.totalScore, 97.5);
   assert.equal(done.data.passed, true);
   assert.equal((await call(`/api/tests/${proposed.id}/session`, { cookie: teacher })).data.session.status, "completed");
-  assert.equal((await call(`/api/tests/${proposed.id}/session`, { method: "PUT", cookie: committee, body: { questions, finalize: true, testDate: today } })).status, 400, "لا تعديل بعد الإنهاء");
+  assert.equal((await call(`/api/tests/${proposed.id}/session`, { method: "PUT", cookie: committee, body: { questions, finalize: true, testDate: today } })).status, 200, "إعادة الإرسال تعطي 200");
+  assert.equal((await call(`/api/tests/${proposed.id}/session`, { method: "PUT", cookie: committee, body: { questions: questions.map(q => ({...q, errors: q.errors + 1})), finalize: true, testDate: today } })).status, 409, "تغيير البيانات بعد الإنهاء يعطي 409");
   const mine = (await call("/api/tests?kind=official", { cookie: teacher })).data;
   assert.ok(mine.tests.every((t) => t.studentId !== s3.id));
   assert.ok((await call(`/api/tests?q=${encodeURIComponent("عمّ")}`, { cookie: admin })).data.total >= 1, "بحث بنطاق الاختبار");

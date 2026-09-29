@@ -47,6 +47,9 @@ const salam = circles.find((c) => c.name === "حلقة السلام");
 const noor = circles.find((c) => c.name === "حلقة النور");
 assert.ok(fajr && yaqeen && salam && noor, "البذرة تحتاج الحلقات الأربع");
 
+await call(`/api/schedule/${fajr.id}`, { method: "PUT", cookie: admin, body: { entries: [] } });
+await call(`/api/schedule/${yaqeen.id}`, { method: "PUT", cookie: admin, body: { entries: [] } });
+
 const stamp = Date.now().toString().slice(-6);
 const ph = (n) => "0599" + stamp.slice(0, 5) + n;
 const newStudent = async (n, circleId, name) => {

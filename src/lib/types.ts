@@ -42,6 +42,9 @@ export interface Student {
   memorizedParts: number;
   reviewSurah: number | null;
   reviewAyah: number | null;
+  reviewStartSurah: number | null;
+  reviewStartAyah: number | null;
+  hasReviewRecord: boolean;
   lastSurah: number;
   lastAyah: number;
   ajkamCourse: string;

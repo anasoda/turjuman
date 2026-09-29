@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { AJKAM_COURSES, CATEGORY_LABELS, DIRECTION_LABELS, GENDER_LABELS, GUARDIAN_RELATIONS, RELATION_LABELS, type Direction, type Gender } from "@shared/constants";
 import { SURAHS } from "@shared/quran-data";
+import { nextStart } from "@shared/quran";
 import { COUNTRY_CODES, GuardianFields, emptyGuardian } from "../components/GuardianFields";
 import { Field, Sheet, useAction } from "../components/ui";
 import { api } from "../lib/api";
@@ -25,6 +26,9 @@ export function StudentForm({ student, circles, onClose, onSaved }: { student: S
   const [direction, setDirection] = useState<Direction>(student?.direction ?? "descending");
   const [surah, setSurah] = useState(student?.lastSurah ?? 114);
   const [ayah, setAyah] = useState(student?.lastAyah ?? 0);
+  const [hasReviewStart, setHasReviewStart] = useState(!!student?.reviewStartSurah);
+  const [reviewSurah, setReviewSurah] = useState(student?.reviewStartSurah ?? 114);
+  const [reviewAyah, setReviewAyah] = useState(student?.reviewStartAyah ?? 1);
   const [more, setMore] = useState(editing);
   const [gMode, setGMode] = useState<"new" | "existing">("new");
   const [guardian, setGuardian] = useState<GuardianInput>(emptyGuardian());
@@ -36,6 +40,7 @@ export function StudentForm({ student, circles, onClose, onSaved }: { student: S
 
   const circle = circles.find((c) => c.id === circleId);
   const maxAyah = SURAHS[surah - 1]?.[1] ?? 286;
+  const nextMemorization = nextStart(direction, { surah, ayah });
 
   const changeDirection = (d: Direction) => {
     setDirection(d);
@@ -52,18 +57,22 @@ export function StudentForm({ student, circles, onClose, onSaved }: { student: S
     const f = new FormData(e.currentTarget);
     const follow = {
       direction, lastSurah: surah, lastAyah: Math.min(ayah, maxAyah),
-      ajkamCourse: String(f.get("ajkamCourse") || ""), monthlyPlanPages: Number(f.get("monthlyPlanPages") || 0), monthlyReviewPlanPages: Number(f.get("monthlyReviewPlanPages") || 0)
+      ajkamCourse: String(f.get("ajkamCourse") || "")
     };
+    const reviewStart = hasReviewStart
+      ? { reviewStartSurah: reviewSurah, reviewStartAyah: reviewAyah }
+      : { reviewStartSurah: null, reviewStartAyah: null };
     const contact = { phoneCc: String(f.get("phoneCc") || "970").trim(), phoneNational: String(f.get("phoneNational") || "").trim() };
     const core = { name: String(f.get("name")), nationalId: String(f.get("nationalId")), birth: String(f.get("birth")), gender, circleId: circleId || null };
     if (editing) {
-      const body = teacher ? follow : { ...follow, ...contact, ...core };
+      const tracking = student.hasReviewRecord ? follow : { ...follow, ...reviewStart };
+      const body = teacher ? tracking : { ...tracking, ...contact, ...core };
       if (await run(() => api(`/api/students/${student.id}`, { method: "PATCH", body }), "تم حفظ التعديلات")) onSaved();
       return;
     }
     if (gMode === "existing" && !pickedGuardian) return void (await run(async () => { throw new Error("اختر ولي أمر من القائمة"); }));
     const link = gMode === "existing" ? { guardianId: pickedGuardian, guardianRelation: pickedRelation } : { guardian };
-    if (await run(() => api("/api/students", { method: "POST", body: { ...follow, ...contact, ...core, ...link } }), "تمت إضافة الطالب")) onSaved();
+    if (await run(() => api("/api/students", { method: "POST", body: { ...follow, ...reviewStart, ...contact, ...core, ...link } }), "تمت إضافة الطالب")) onSaved();
   };
 
   return (
@@ -151,10 +160,7 @@ export function StudentForm({ student, circles, onClose, onSaved }: { student: S
                 ))}
               </div>
             </fieldset>
-            <div className="form-grid two">
-              <Field label="خطة الحفظ الشهرية (صفحات)"><input name="monthlyPlanPages" type="number" min={0} max={604} defaultValue={student?.monthlyPlanPages ?? 10} /></Field>
-              <Field label="خطة المراجعة الشهرية (صفحات)" ><input name="monthlyReviewPlanPages" type="number" min={0} max={604} defaultValue={student?.monthlyReviewPlanPages ?? 0} /></Field>
-            </div>
+            {!editing && <p className="muted" style={{ margin: 0 }}>بعد إضافة الطالب، ضع خطة الشهر المطلوب من زر «خطة الشهر» في بطاقته.</p>}
             <div className="form-grid two">
               <Field label="موضع الحفظ الجديد: آخر سورة وصل إليها">
                 <select value={surah} onChange={(e) => { setSurah(Number(e.target.value)); setAyah(0); }}>
@@ -165,6 +171,24 @@ export function StudentForm({ student, circles, onClose, onSaved }: { student: S
                 <input type="number" min={0} max={maxAyah} value={ayah} onChange={(e) => setAyah(Math.max(0, Math.min(maxAyah, Number(e.target.value))))} />
               </Field>
             </div>
+            <p className="muted" style={{ margin: 0, fontSize: ".85rem" }}>
+              {nextMemorization
+                ? `بداية الحفظ القادمة: سورة ${SURAHS[nextMemorization.surah - 1][0]}، آية ${nextMemorization.ayah}. إذا سيبدأ من منتصف السورة، أدخل الآية السابقة في «آخر آية حفظها».`
+                : "أتمّ الطالب مسار الحفظ بهذا الاتجاه."}
+            </p>
+            {student?.hasReviewRecord ? (
+              <p className="muted">موضع المراجعة الحالي من آخر تسميع مسجّل؛ لتصحيحه عدّل سجل التسميع.</p>
+            ) : (
+              <div className="form-grid">
+                <label className="check"><input type="checkbox" checked={hasReviewStart} onChange={(e) => setHasReviewStart(e.target.checked)} />تحديد موضع المراجعة الذي وصل إليه الطالب</label>
+                {hasReviewStart && <div className="form-grid two">
+                  <Field label="آخر سورة راجعها"><select value={reviewSurah} onChange={(e) => { setReviewSurah(Number(e.target.value)); setReviewAyah(1); }}>
+                    {SURAHS.map((s, i) => <option key={s[0]} value={i + 1}>{i + 1}. {s[0]}</option>)}
+                  </select></Field>
+                  <Field label="آخر آية راجعها"><input type="number" required min={1} max={SURAHS[reviewSurah - 1]?.[1] ?? 286} value={reviewAyah} onChange={(e) => setReviewAyah(Number(e.target.value))} /></Field>
+                </div>}
+              </div>
+            )}
             <Field label="آخر دورة أحكام">
               <select name="ajkamCourse" defaultValue={student?.ajkamCourse ?? ""}>
                 <option value="">لا يوجد</option>

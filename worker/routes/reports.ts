@@ -66,9 +66,11 @@ export async function buildReportRows(db: D1Database, centerId: string, month: s
     `SELECT student_id, start_surah, start_ayah, end_surah, end_ayah, pages, plan_pages, review_pages, review_plan_pages FROM monthly_reports WHERE center_id = ? AND month = ? AND student_id IN (${marks})`
   ).bind(centerId, month, ...ids).all<SavedRow>();
   const savedBy = new Map(saved.map((r) => [r.student_id, r]));
-  const { results: plans } = await db.prepare(`SELECT id, monthly_review_plan_pages AS plan FROM students WHERE center_id = ? AND id IN (${marks})`)
-    .bind(centerId, ...ids).all<{ id: string; plan: number }>();
-  const reviewPlanBy = new Map(plans.map((r) => [r.id, r.plan]));
+  const { results: plans } = await db.prepare(
+    `SELECT student_id AS studentId, memorize_pages AS memorizePages, review_pages AS reviewPages
+       FROM student_monthly_plans WHERE center_id = ? AND month = ? AND student_id IN (${marks})`
+  ).bind(centerId, month, ...ids).all<{ studentId: string; memorizePages: number; reviewPages: number }>();
+  const planBy = new Map(plans.map((r) => [r.studentId, r]));
 
   return students.map((s) => {
     const mine = daily.filter((d) => d.student_id === s.id);
@@ -81,8 +83,8 @@ export async function buildReportRows(db: D1Database, centerId: string, month: s
       if (end) end = furthest(s.direction, end, range.to);
     }
     let pages = countUniquePages(s.direction, ranges);
-    // خطة الطالب اليوم قد تختلف عمّا كانت عليه وقت حفظ الكشف: الكشف المحفوظ يبقى بخطته المحفوظة
-    let planPages = s.monthlyPlanPages;
+    // كل شهر له خطته. الكشوف المحفوظة تبقى بخطتها عند الحفظ.
+    let planPages = planBy.get(s.id)?.memorizePages ?? (month < "2026-09" ? s.monthlyPlanPages : 0);
     const sv = savedBy.get(s.id);
     // المراجعة: صفحات فريدة عبر أيام الشهر (لكل نطاق اتجاهه الحر)، والكشف المحفوظ يبقى بمنجزه وخطته المحفوظين
     const reviewed = mine.filter((d) => d.attendance !== "absent" && d.attendance !== "excused" && d.review_from_surah && d.review_to_surah);
@@ -94,7 +96,7 @@ export async function buildReportRows(db: D1Database, centerId: string, month: s
       if (dir) for (const p of pagesOfRange(dir, f, t)) reviewSet.add(p);
     }
     let reviewPages = reviewSet.size;
-    let reviewPlanPages = reviewPlanBy.get(s.id) ?? 0;
+    let reviewPlanPages = planBy.get(s.id)?.reviewPages ?? 0;
     if (sv) { reviewPages = sv.review_pages; reviewPlanPages = sv.review_plan_pages; }
     if (sv) {
       planPages = sv.plan_pages;
@@ -317,7 +319,7 @@ async function studentSummary(c: Context<AppEnv>, student: StudentRow & { memori
   const [current] = await buildReportRows(c.env.DB, auth.centerId, month, [student]);
 
   return {
-    student: { ...student, memorizedParts: completedJuz(student.direction, { surah: student.lastSurah, ayah: student.lastAyah }), nextStart: nextStart(student.direction, { surah: student.lastSurah, ayah: student.lastAyah }), reviewLast },
+    student: { ...student, monthlyPlanPages: current.planPages, memorizedParts: completedJuz(student.direction, { surah: student.lastSurah, ayah: student.lastAyah }), nextStart: nextStart(student.direction, { surah: student.lastSurah, ayah: student.lastAyah }), reviewLast },
     month: { month, pages: current.pages, planPages: current.planPages, percent: current.percent, present: current.present, absent: current.absent, excused: current.excused,
       reviewPages: current.reviewPages, reviewPlanPages: current.reviewPlanPages, reviewPercent: current.reviewPercent },
     daily, tests, sard, reports

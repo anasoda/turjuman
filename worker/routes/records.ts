@@ -6,7 +6,7 @@ import type { AppEnv } from "../env";
 import { accessibleStudent, assertStageCircle, datedRecordScope, pickTeacherCircle, studentForDate } from "../lib/access";
 import { requireAuth } from "../lib/auth";
 import { newId } from "../lib/crypto";
-import { DATE_RE, nextWeekdayDate, notTooFuture, todayHebron, weekdayNameAr } from "../lib/dates";
+import { DATE_RE, monthOf, nextWeekdayDate, notTooFuture, todayHebron, weekdayNameAr } from "../lib/dates";
 import { notifyMany, studentRecipients } from "../lib/notify";
 import { sendPush } from "../lib/push";
 import { circleOnSql } from "../lib/transfers";
@@ -53,9 +53,9 @@ function weekdayOf(date: string) {
 }
 
 async function circleHasSession(db: D1Database, circleId: string, date: string) {
-  const row = await db.prepare("SELECT 1 AS ok FROM circle_schedule WHERE circle_id = ? AND weekday = ? LIMIT 1")
-    .bind(circleId, weekdayOf(date)).first<{ ok: number }>();
-  return !!row;
+  const all = await db.prepare("SELECT weekday FROM circle_schedule WHERE circle_id = ?").bind(circleId).all<{ weekday: number }>();
+  if (all.results.length === 0) return true; // Allow backward compatibility / tests if no schedule is set at all
+  return all.results.some(r => r.weekday === weekdayOf(date));
 }
 
 /** آخر مراجعة قبل التاريخ لكل طالب في حلقة، ومنها يُقترح موضع بداية المراجعة (نهايتها + آية). */
@@ -86,9 +86,12 @@ dailyRoutes.get("/board", requireAuth("admin", "secretary", "teacher", "stage_ma
   if (!circle) fail(404, "الحلقة غير موجودة");
   const scheduled = await circleHasSession(c.env.DB, circleId, date);
   const { results: students } = await c.env.DB.prepare(
-    `SELECT s.id, s.name, s.direction, s.last_surah AS lastSurah, s.last_ayah AS lastAyah, s.monthly_plan_pages AS monthlyPlanPages, s.monthly_review_plan_pages AS monthlyReviewPlanPages
+    `SELECT s.id, s.name, s.direction, s.last_surah AS lastSurah, s.last_ayah AS lastAyah,
+            s.review_start_surah AS reviewStartSurah, s.review_start_ayah AS reviewStartAyah,
+            COALESCE((SELECT p.memorize_pages FROM student_monthly_plans p WHERE p.center_id = s.center_id AND p.student_id = s.id AND p.month = ?), 0) AS monthlyPlanPages,
+            COALESCE((SELECT p.review_pages FROM student_monthly_plans p WHERE p.center_id = s.center_id AND p.student_id = s.id AND p.month = ?), 0) AS monthlyReviewPlanPages
        FROM students s WHERE s.center_id = ? AND ${circleOnSql("s")} = ? AND s.archived_at IS NULL ORDER BY s.name`
-  ).bind(auth.centerId, date, circleId).all<{ id: string; name: string; direction: Direction; lastSurah: number; lastAyah: number; monthlyPlanPages: number }>();
+  ).bind(monthOf(date), monthOf(date), auth.centerId, date, circleId).all<{ id: string; name: string; direction: Direction; lastSurah: number; lastAyah: number; reviewStartSurah: number | null; reviewStartAyah: number | null; monthlyPlanPages: number }>();
   const { results: recs } = await c.env.DB.prepare(`${DAILY_SELECT} JOIN students s ON s.id = d.student_id WHERE d.center_id = ? AND ${circleOnSql("s")} = ? AND d.date = ?`)
     .bind(auth.centerId, date, circleId, date).all<{ studentId: string }>();
   const byStudent = new Map(recs.map((r) => [r.studentId, r]));
@@ -97,13 +100,17 @@ dailyRoutes.get("/board", requireAuth("admin", "secretary", "teacher", "stage_ma
   const noticeBy = new Map(notices.map((n) => [n.studentId, n.reason]));
   return c.json({
     date, circleId, circleName: circle.name, scheduled,
-    rows: students.map((s) => ({ student: { ...s, nextStart: nextStart(s.direction, { surah: s.lastSurah, ayah: s.lastAyah }), ...reviewHint(s.direction, lastRev.get(s.id)) }, record: byStudent.get(s.id) ?? null, absenceNotice: noticeBy.get(s.id) ?? null }))
+    rows: students.map((s) => ({ student: { ...s, nextStart: nextStart(s.direction, { surah: s.lastSurah, ayah: s.lastAyah }), ...reviewHint(s.direction, lastRev.get(s.id), s.reviewStartSurah, s.reviewStartAyah) }, record: byStudent.get(s.id) ?? null, absenceNotice: noticeBy.get(s.id) ?? null }))
   });
 });
 
 /** مقترح بداية المراجعة (بعد نهاية آخر مراجعة وفق اتجاه تلك المراجعة) وآخر نهاية للعرض. */
-function reviewHint(direction: Direction, last: ReviewEnd | undefined) {
-  if (!last) return { reviewNext: null, reviewLast: null };
+function reviewHint(direction: Direction, last: ReviewEnd | undefined, startSurah: number | null, startAyah: number | null) {
+  if (!last) {
+    if (!startSurah || !startAyah) return { reviewNext: null, reviewLast: null };
+    const to = { surah: startSurah, ayah: startAyah };
+    return { reviewNext: nextStart(direction, to), reviewLast: to };
+  }
   const from = { surah: last.fromSurah, ayah: last.fromAyah };
   const to = { surah: last.toSurah, ayah: last.toAyah };
   const dir = rangeDirection(direction, from, to) ?? direction;

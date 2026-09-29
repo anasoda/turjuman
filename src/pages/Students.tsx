@@ -7,6 +7,7 @@ import { Field, Icons, Sheet, useAction, useUi } from "../components/ui";
 import { ContactIcons, ContactRow } from "../components/Contact";
 import { StudentImport } from "./StudentImport";
 import { StudentForm } from "./StudentForm";
+import { StudentPlan } from "./StudentPlan";
 import { api } from "../lib/api";
 import { initials, useDebounced, useFetch, useWantsNew } from "../lib/hooks";
 import { useMe } from "../lib/session";
@@ -128,13 +129,14 @@ function StudentDetail({ student: s, circles, onClose, onEdit, onChanged }: { st
   const canEdit = canEditFully || user.role === "teacher";
   // مدير المرحلة كالسكرتير داخل مراحله، لكن الأرشفة وأولياء الأمور للإدارة وحدها
   const isAdminish = user.role === "admin" || user.role === "secretary";
-  const [mode, setMode] = useState<"" | "move" | "archive">("");
+  const [mode, setMode] = useState<"" | "move" | "archive" | "plan">("");
   const surah = SURAHS[s.lastSurah - 1]?.[0] ?? "";
   const full = useFetch<{ student: Student }>(`/api/students/${s.id}`);
   const guardians = full.data?.student.guardians ?? [];
 
   if (mode === "move") return <MoveSheet s={s} circles={circles} onClose={() => setMode("")} onDone={onChanged} />;
   if (mode === "archive") return <ArchiveSheet s={s} onClose={() => setMode("")} onDone={onChanged} />;
+  if (mode === "plan") return <StudentPlan student={s} onClose={() => setMode("")} onSaved={onChanged} />;
 
   return (
     <Sheet title={s.name} onClose={onClose}>
@@ -146,9 +148,9 @@ function StudentDetail({ student: s, circles, onClose, onEdit, onChanged }: { st
         {full.data?.student.pendingTransfer && <><dt>نقل مرتَّب</dt><dd>إلى {full.data.student.pendingTransfer.toCircleName} من {fmtDay(full.data.student.pendingTransfer.effectiveFrom)}</dd></>}
         <dt>اتجاه الحفظ</dt><dd>{DIRECTION_LABELS[s.direction]}</dd>
         <dt>موضع الحفظ الجديد</dt><dd>سورة {surah}{s.lastAyah ? ` — آية ${s.lastAyah}` : " (لم يبدأ فيها)"}</dd>
-        <dt>موضع المراجعة</dt><dd>{s.reviewSurah ? fmtPosPage({ surah: s.reviewSurah, ayah: s.reviewAyah! }) : "لا مراجعة مسجّلة"}</dd>
-        <dt>خطة الحفظ الشهرية</dt><dd>{s.monthlyPlanPages} صفحة</dd>
-        <dt>خطة المراجعة الشهرية</dt><dd>{s.monthlyReviewPlanPages} صفحة</dd>
+        <dt>موضع المراجعة</dt><dd>{s.reviewSurah ? fmtPosPage({ surah: s.reviewSurah, ayah: s.reviewAyah! }) : "لم يُحدّد بعد"}</dd>
+        <dt>خطة الحفظ لهذا الشهر</dt><dd>{s.monthlyPlanPages} صفحة</dd>
+        <dt>خطة المراجعة لهذا الشهر</dt><dd>{s.monthlyReviewPlanPages} صفحة</dd>
         <dt>آخر دورة أحكام</dt><dd>{s.ajkamCourse || "—"}</dd>
       </dl>
 
@@ -172,6 +174,7 @@ function StudentDetail({ student: s, circles, onClose, onEdit, onChanged }: { st
       )}
       {canEdit && <StudentTools student={s} canHonor={isAdminish} onChanged={onChanged} />}
       <div className="actions">
+        {canEdit && <button className="btn small" type="button" onClick={() => setMode("plan")}>خطة الشهر</button>}
         {canEdit && <button className="btn small" type="button" onClick={onEdit}>تعديل</button>}
         {canEditFully && <button className="btn ghost small" type="button" onClick={() => setMode("move")}>نقل إلى حلقة أخرى</button>}
         {isAdminish && <Link className="btn ghost small" to="/app/guardians">أولياء الأمور</Link>}

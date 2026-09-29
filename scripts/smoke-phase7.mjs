@@ -25,37 +25,57 @@ const daysAgo = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 1
 
 const G = "obai-01";
 const teacher = await session(G, "obai.teacher1");
+const admin = await session(G, "admin");
 const { students } = (await call("/api/students?pageSize=100", { cookie: teacher })).data;
 const s = students.find((x) => !x.archivedAt) ?? students[0];
+
+const scheduleData = (await call(`/api/schedule?circleId=${s.circleId}`, { cookie: admin })).data.entries;
+const allowedWeekdays = scheduleData.length ? scheduleData.map(sch => sch.weekday) : [0, 1, 2, 3, 4, 5, 6];
+function getValidDay(minDaysAgo, matchAllowed = true) {
+  let d = minDaysAgo;
+  while (true) {
+    const dateObj = new Date(Date.now() - d * 864e5);
+    const isAllowed = allowedWeekdays.includes(dateObj.getDay());
+    if (matchAllowed ? isAllowed : !isAllowed) {
+      return dateObj.toISOString().slice(0, 10);
+    }
+    d++;
+  }
+}
+
+const D_VALID_1 = getValidDay(21);
+const D_INVALID_1 = getValidDay(22, false);
+const D_VALID_2 = getValidDay(23);
+const D_INVALID_2 = getValidDay(24, false);
+
 const post = (body) => call("/api/daily", { method: "POST", cookie: teacher, body: { studentId: s.id, ...body } });
-const start = (await call(`/api/daily/board?date=${daysAgo(1)}&circleId=${s.circleId}`, { cookie: teacher })).data.rows.find((r) => r.student.id === s.id).student.nextStart;
+const start = (await call(`/api/daily/board?date=${getValidDay(1)}&circleId=${s.circleId}`, { cookie: teacher })).data.rows.find((r) => r.student.id === s.id).student.nextStart;
 
 await test("«بعذر» يُقبل بلا نطاق تسميع مع سبب العذر", async () => {
-  const r = await post({ date: daysAgo(21), attendance: "excused", note: "مرض" });
+  const r = await post({ date: D_VALID_1, attendance: "excused", note: "مرض" });
   assert.ok([200, 201].includes(r.status), JSON.stringify(r.data));
   assert.equal(r.data.pages, 0);
 });
 
 await test("«بعذر» و«متأخر» بلا ملاحظة مرفوضان", async () => {
-  assert.equal((await post({ date: daysAgo(22), attendance: "excused", note: "" })).status, 400);
-  assert.equal((await post({ date: daysAgo(22), attendance: "late", from: start, to: start, note: "" })).status, 400);
+  assert.equal((await post({ date: D_INVALID_1, attendance: "excused", note: "" })).status, 400);
+  assert.equal((await post({ date: D_INVALID_1, attendance: "late", from: start, to: start, note: "" })).status, 400);
 });
 
 await test("«متأخر» يتطلب نطاق تسميع ويُحسب كحاضر في الإحصاءات", async () => {
-  assert.equal((await post({ date: daysAgo(23), attendance: "late", note: "زحمة سير" })).status, 400);
-  const ok = await post({ date: daysAgo(23), attendance: "late", from: start, to: start, note: "زحمة سير" });
+  assert.equal((await post({ date: D_VALID_2, attendance: "late", note: "زحمة سير" })).status, 400);
+  const ok = await post({ date: D_VALID_2, attendance: "late", from: start, to: start, note: "زحمة سير" });
   assert.ok([200, 201].includes(ok.status), JSON.stringify(ok.data));
-  const board = (await call(`/api/daily/board?date=${daysAgo(23)}&circleId=${s.circleId}`, { cookie: teacher })).data;
+  const board = (await call(`/api/daily/board?date=${D_VALID_2}&circleId=${s.circleId}`, { cookie: teacher })).data;
   const rec = board.rows.find((r) => r.student.id === s.id).record;
   assert.equal(rec.attendance, "late");
   assert.equal(rec.note, "زحمة سير");
 });
 
 await test("قيمة حضور غير معروفة ما زالت مرفوضة", async () => {
-  assert.equal((await post({ date: daysAgo(24), attendance: "sick", note: "x" })).status, 400);
+  assert.equal((await post({ date: D_INVALID_2, attendance: "sick", note: "x" })).status, 400);
 });
 
-const admin = await session(G, "admin");
 const stamp = Date.now().toString().slice(-6);
 
 await test("لا يُترك طالب بلا ولي أمر عند تعديل الأبناء", async () => {

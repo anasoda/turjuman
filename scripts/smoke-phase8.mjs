@@ -27,15 +27,35 @@ const G = "obai-01";
 const admin = await session(G, "admin");
 const teacher = await session(G, "obai.teacher1");
 const circles = (await call("/api/circles", { cookie: teacher })).data.circles;
-const D1 = daysAgo(27), D2 = daysAgo(26);
-
 // طالب من أول حلقة للمعلّم له طلاب
 let student = null, circle = null;
 for (const c of circles) {
-  const rows = (await call(`/api/daily/board?date=${D1}&circleId=${c.id}`, { cookie: teacher })).data.rows ?? [];
+  const rows = (await call(`/api/daily/board?date=${daysAgo(0)}&circleId=${c.id}`, { cookie: teacher })).data.rows ?? [];
   if (rows.length) { student = rows[0].student; circle = c; break; }
 }
 assert.ok(student, "البذرة تحتاج طالباً في حلقة المعلّم");
+
+const scheduleData = (await call(`/api/schedule?circleId=${circle.id}`, { cookie: admin })).data.entries;
+const allowedWeekdays = scheduleData.length ? scheduleData.map(s => s.weekday) : [0, 1, 2, 3, 4, 5, 6];
+
+function getValidDay(minDaysAgo, matchAllowed = true) {
+  let d = minDaysAgo;
+  while (true) {
+    const dateObj = new Date(Date.now() - d * 864e5);
+    const isAllowed = allowedWeekdays.includes(dateObj.getDay());
+    if (matchAllowed ? isAllowed : !isAllowed) {
+      return dateObj.toISOString().slice(0, 10);
+    }
+    d++;
+  }
+}
+
+const D1 = getValidDay(27);
+const D2 = getValidDay(20);
+const D3 = getValidDay(13);
+const D_FAIL_1 = getValidDay(28, false);
+const D_FAIL_2 = getValidDay(29, false);
+
 const post = (date, body) => call("/api/daily", { method: "POST", cookie: teacher, body: { studentId: student.id, date, ...body } });
 const board = async (date) => (await call(`/api/daily/board?date=${date}&circleId=${circle.id}`, { cookie: teacher })).data.rows.find((r) => r.student.id === student.id);
 
@@ -47,7 +67,7 @@ await test("حضور بمراجعة فقط (بلا حفظ جديد) يُقبل �
 });
 
 await test("حضور بلا حفظ ولا مراجعة مرفوض", async () => {
-  assert.equal((await post(daysAgo(28), { attendance: "present" })).status, 400);
+  assert.equal((await post(D_FAIL_1, { attendance: "present" })).status, 400);
 });
 
 await test("نهاية المراجعة قبل بدايتها مرفوضة، والاتجاه حرّ", async () => {
@@ -55,15 +75,15 @@ await test("نهاية المراجعة قبل بدايتها مرفوضة، و�
   const free = await post(D2, { attendance: "present", review: { from: { surah: 2, ayah: 1 }, to: { surah: 3, ayah: 5 }, grade: "" } });
   assert.ok([200, 201].includes(free.status), JSON.stringify(free.data));
   // آية غير موجودة
-  assert.equal((await post(daysAgo(29), { attendance: "present", review: { from: { surah: 1, ayah: 99 }, to: { surah: 2, ayah: 1 }, grade: "" } })).status, 400);
+  assert.equal((await post(D_FAIL_2, { attendance: "present", review: { from: { surah: 1, ayah: 99 }, to: { surah: 2, ayah: 1 }, grade: "" } })).status, 400);
 });
 
 await test("بداية مراجعة اليوم التالي تُقترح من نهاية آخر مراجعة", async () => {
-  const row = await board(daysAgo(25));
+  const row = await board(D3);
   assert.deepEqual(row.student.reviewLast, { surah: 3, ayah: 5 });
   assert.deepEqual(row.student.reviewNext, { surah: 3, ayah: 6 });
   // ولا اقتراح قبل أول مراجعة
-  const first = await board(daysAgo(40));
+  const first = await board(getValidDay(40));
   assert.equal(first.student.reviewNext, null);
 });
 
@@ -76,7 +96,7 @@ await test("لوحة اليوم تعيد حقول المراجعة في سجل �
 
 await test("الغياب يمسح المراجعة، والحضور مرة واحدة فقط في اليوم (لا تضاعف)", async () => {
   const before = (await call("/api/stats/students", { cookie: admin })).data.students.find((s) => s.id === student.id);
-  const d = daysAgo(31);
+  const d = getValidDay(31);
   await post(d, { attendance: "present", review: { from: { surah: 114, ayah: 1 }, to: { surah: 113, ayah: 5 }, grade: "" } });
   const mid = (await call("/api/stats/students", { cookie: admin })).data.students.find((s) => s.id === student.id);
   assert.equal(mid.present, before.present + 1, "سجل بحفظ ومراجعة يجب أن يُحسب حضوراً واحداً");

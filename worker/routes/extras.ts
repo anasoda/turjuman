@@ -114,15 +114,11 @@ scheduleRoutes.get("/", requireAuth(), async (c) => {
   return c.json({ entries: results });
 });
 
-scheduleRoutes.put("/:circleId", requireAuth("admin", "secretary", "teacher"), async (c) => {
+scheduleRoutes.put("/:circleId", requireAuth("admin", "secretary"), async (c) => {
   const auth = c.get("auth");
   const circleId = c.req.param("circleId");
   const circle = await c.env.DB.prepare("SELECT id FROM circles WHERE id = ? AND center_id = ?").bind(circleId, auth.centerId).first();
   if (!circle) fail(404, "الحلقة غير موجودة");
-  if (auth.role === "teacher") {
-    const own = await c.env.DB.prepare("SELECT 1 FROM circle_teachers WHERE circle_id = ? AND teacher_id = ?").bind(circleId, auth.userId).first();
-    if (!own) fail(404, "الحلقة غير موجودة");
-  }
   const b = await parseBody(c, scheduleSchema);
   await c.env.DB.batch([
     c.env.DB.prepare("DELETE FROM circle_schedule WHERE circle_id = ?").bind(circleId),
@@ -290,7 +286,8 @@ statsRoutes.get("/students", requireAuth("admin", "secretary", "stage_manager", 
   const auth = c.get("auth");
   const scope = studentScope(c);
   const { results } = await c.env.DB.prepare(
-    `SELECT s.id, s.name, s.national_id AS nationalId, s.birth, s.gender, s.direction, s.last_surah AS lastSurah, s.last_ayah AS lastAyah, s.monthly_plan_pages AS monthlyPlanPages,
+    `SELECT s.id, s.name, s.national_id AS nationalId, s.birth, s.gender, s.direction, s.last_surah AS lastSurah, s.last_ayah AS lastAyah,
+            COALESCE((SELECT p.memorize_pages FROM student_monthly_plans p WHERE p.center_id = s.center_id AND p.student_id = s.id AND p.month = ?), 0) AS monthlyPlanPages,
             ci.id AS circleId, ci.name AS circleName, ci.level_key AS levelKey,
             (SELECT COUNT(*) FROM daily_records d WHERE d.student_id = s.id AND d.attendance IN ('present', 'late')) AS present,
             (SELECT COUNT(*) FROM daily_records d WHERE d.student_id = s.id AND d.attendance = 'absent') AS absent,
@@ -300,7 +297,7 @@ statsRoutes.get("/students", requireAuth("admin", "secretary", "stage_manager", 
             (SELECT d.review_to_ayah FROM daily_records d WHERE d.student_id = s.id AND d.review_to_surah IS NOT NULL ORDER BY d.date DESC LIMIT 1) AS reviewAyah,
             (SELECT COUNT(*) FROM tests t WHERE t.student_id = s.id AND t.status = 'completed') AS tests
        FROM students s LEFT JOIN circles ci ON ci.id = s.circle_id WHERE s.center_id = ? AND s.archived_at IS NULL${scope.sql} ORDER BY s.name`
-  ).bind(auth.centerId, ...scope.binds).all<{ direction: string; lastSurah: number; lastAyah: number }>();
+  ).bind(monthOf(todayHebron()), auth.centerId, ...scope.binds).all<{ direction: string; lastSurah: number; lastAyah: number }>();
   return c.json({ students: results.map(withParts) });
 });
 

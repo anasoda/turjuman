@@ -215,9 +215,13 @@ await test("تسجيل غياب يُشعر ولي الأمر (بحسابه)", as
   const kids = (await call("/api/guardians/children", { cookie: wali })).data.children;
   await call("/api/notifications/read", { method: "POST", cookie: wali, body: { all: true } });
   const before = (await call("/api/notifications/count", { cookie: wali })).data.unread;
-  const day = new Date(Date.now() - 3 * 86400_000).toLocaleDateString("en-CA", { timeZone: "Asia/Hebron" });
-  const r = await call("/api/daily", { method: "POST", cookie: admin, body: { studentId: kids[0].id, date: day, attendance: "absent" } });
-  assert.ok(r.status === 200 || r.status === 201, JSON.stringify(r.data));
+  let r, day;
+  for (let i = 0; i < 7; i++) {
+    day = new Date(Date.now() - i * 86400_000).toLocaleDateString("en-CA", { timeZone: "Asia/Hebron" });
+    r = await call("/api/daily", { method: "POST", cookie: admin, body: { studentId: kids[0].id, date: day, attendance: "absent" } });
+    if (r.status === 200 || r.status === 201) break;
+  }
+  assert.ok(r && (r.status === 200 || r.status === 201), JSON.stringify(r?.data));
   assert.equal((await call("/api/notifications/count", { cookie: wali })).data.unread, before + 1);
 });
 
