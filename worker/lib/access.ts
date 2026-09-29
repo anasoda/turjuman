@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import type { Direction } from "../../shared/constants";
 import type { AppEnv } from "../env";
+import { circleOnSql } from "./transfers";
 import { fail } from "./util";
 
 export interface StudentLite {
@@ -76,10 +77,45 @@ export function pickTeacherCircle(c: Context<AppEnv>, wanted: string): string {
   return mine.includes(wanted) ? wanted : "";
 }
 
-/**
- * يحمّل طالباً بعد فحص الصلاحية: الإداريون واللجنة لكل المركز، المعلّم لحلقته فقط، الطالب لنفسه فقط.
- * غير المسموح يرى «غير موجود» (لا نكشف وجود طلاب الآخرين).
- */
+/** الصلاحية وحلقة الطالب في يوم السجل، بصرف النظر عن حلقته الحالية. */
+export async function studentForDate(c: Context<AppEnv>, studentId: string, date: string): Promise<StudentLite> {
+  const auth = c.get("auth");
+  const row = await c.env.DB.prepare(
+    `SELECT s.id, s.name, s.gender, ${circleOnSql("s")} AS circleId, s.direction,
+            s.last_surah AS lastSurah, s.last_ayah AS lastAyah, s.monthly_plan_pages AS monthlyPlanPages,
+            s.archived_at AS archivedAt, s.user_id AS userId
+       FROM students s WHERE s.id = ? AND s.center_id = ?`
+  ).bind(date, studentId, auth.centerId).first<StudentLite>();
+  if (!row) fail(404, "الطالب غير موجود");
+  if (auth.role === "teacher" && (!row.circleId || !teacherCircleIds(c).includes(row.circleId))) {
+    fail(404, "الطالب غير موجود");
+  }
+  if (auth.role === "stage_manager") {
+    if (!row.circleId) fail(404, "الطالب غير موجود");
+    if (!(auth.circleIds ?? []).includes(row.circleId)) {
+      const stages = stagesOf(c);
+      const ok = await c.env.DB.prepare(`SELECT 1 FROM circles WHERE id = ? AND center_id = ? AND level_key IN (${stages.map(() => "?").join(",")})`)
+        .bind(row.circleId, auth.centerId, ...stages).first();
+      if (!ok) fail(404, "الطالب غير موجود");
+    }
+  }
+  return row;
+}
+
+/** حصر سجلات التسميع والسرد بحسب حلقة الطالب في تاريخ كل سجل. */
+export function datedRecordScope(c: Context<AppEnv>, recordAlias: string): { sql: string; binds: unknown[] } {
+  const auth = c.get("auth");
+  const circle = circleOnSql("s", `${recordAlias}.date`);
+  if (auth.role === "teacher") {
+    const mine = teacherCircleIds(c);
+    if (!mine.length) return { sql: " AND 1 = 0", binds: [] };
+    return { sql: ` AND ${circle} IN (${mine.map(() => "?").join(",")})`, binds: mine };
+  }
+  if (auth.role === "stage_manager") return stageCircleSql(c, circle);
+  return { sql: "", binds: [] };
+}
+
+/** الطالب بنطاق حلقته الحالية؛ الخارج عن النطاق يرى 404. */
 export async function accessibleStudent(c: Context<AppEnv>, studentId: string): Promise<StudentLite> {
   const auth = c.get("auth");
   const row = await c.env.DB.prepare(`${SELECT} WHERE id = ? AND center_id = ?`).bind(studentId, auth.centerId).first<StudentLite>();

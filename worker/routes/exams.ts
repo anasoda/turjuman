@@ -356,7 +356,11 @@ testRoutes.delete("/:id", requireAuth("admin", "secretary", "teacher", "stage_ma
   const t = await loadTest(c, c.req.param("id"));
   await accessibleStudent(c, t.studentId);
   if (auth.role === "teacher" && !(t.kind === "trial" || t.status === "proposed")) fail(403, "يمكنك حذف الاختبارات التجريبية والاقتراحات المعلّقة فقط");
-  await c.env.DB.prepare("DELETE FROM tests WHERE id = ?").bind(t.id).run();
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM test_questions WHERE test_id = ?").bind(t.id),
+    c.env.DB.prepare("DELETE FROM exam_sessions WHERE test_id = ?").bind(t.id),
+    c.env.DB.prepare("DELETE FROM tests WHERE id = ?").bind(t.id)
+  ]);
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "delete", entity: "test", entityId: t.id });
   return c.json({ ok: true });
 });

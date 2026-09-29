@@ -147,7 +147,9 @@ circleRoutes.delete("/:id", requireAuth("admin", "secretary"), async (c) => {
   if (has && has.n > 0) fail(400, `لا يمكن حذف الحلقة قبل نقل طلابها (${has.n})؛ يمكنك تعطيلها بدلاً من ذلك`);
   const hasDaily = await c.env.DB.prepare("SELECT 1 FROM daily_records WHERE circle_id = ? LIMIT 1").bind(id).first();
   const hasSard = await c.env.DB.prepare("SELECT 1 FROM sard_records WHERE circle_id = ? LIMIT 1").bind(id).first();
-  if (hasDaily || hasSard) fail(400, "لا يمكن حذف الحلقة لوجود سجلات تسميع أو سرد تاريخية مرتبطة بها؛ يمكنك تعطيلها بدلاً من ذلك");
+  const hasTests = await c.env.DB.prepare("SELECT 1 FROM tests WHERE circle_id = ? LIMIT 1").bind(id).first();
+  const hasTransfers = await c.env.DB.prepare("SELECT 1 FROM student_transfers WHERE from_circle_id = ? OR to_circle_id = ? LIMIT 1").bind(id, id).first();
+  if (hasDaily || hasSard || hasTests || hasTransfers) fail(400, "لا يمكن حذف الحلقة لوجود سجلات أو انتقالات تاريخية مرتبطة بها؛ يمكنك تعطيلها بدلاً من ذلك");
   await c.env.DB.batch([
     c.env.DB.prepare("UPDATE students SET circle_id = NULL, updated_at = ? WHERE circle_id = ?").bind(Date.now(), id),
     c.env.DB.prepare("DELETE FROM circle_schedule WHERE circle_id = ?").bind(id),

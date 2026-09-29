@@ -237,6 +237,7 @@ staffRoutes.delete("/:id", requireAuth("admin", "secretary"), async (c) => {
     "UPDATE sard_records SET recorded_by = NULL WHERE recorded_by = ?",
     "UPDATE tests SET proposed_by = NULL WHERE proposed_by = ?",
     "UPDATE tests SET decided_by = NULL WHERE decided_by = ?",
+    "UPDATE exam_sessions SET examiner_id = NULL WHERE examiner_id = ?",
     "UPDATE monthly_reports SET saved_by = NULL WHERE saved_by = ?",
     "UPDATE staff_attendance SET recorded_by = NULL WHERE recorded_by = ?",
     "UPDATE audit_log SET user_id = NULL WHERE user_id = ?"

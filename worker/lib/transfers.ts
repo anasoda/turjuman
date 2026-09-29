@@ -4,11 +4,12 @@ import { todayHebron } from "./dates";
 export { TRANSFER_ARRANGE_FROM_DAY, firstOfNextMonth, planTransfer, type TransferPlan } from "../../shared/transfer-plan";
 
 /**
- * حلقة الطالب في التاريخ D (`alias` اسم جدول الطلاب في الاستعلام). يحتاج معاملاً واحداً: التاريخ.
+ * حلقة الطالب في التاريخ D (`alias` اسم جدول الطلاب في الاستعلام). التاريخ معامل ربط افتراضياً
+ * أو تعبير SQL داخلي مثل تاريخ صف السجل عند حصر قائمة السجلات.
  * أول انتقال يسري بعد D يعطي حلقة ما قبله، وإلا فحلقته الحالية.
  */
-export const circleOnSql = (alias: string): string =>
-  `COALESCE((SELECT t.from_circle_id FROM student_transfers t WHERE t.student_id = ${alias}.id AND t.effective_from > ? ORDER BY t.effective_from ASC LIMIT 1), ${alias}.circle_id)`;
+export const circleOnSql = (alias: string, dateSql = "?"): string =>
+  `COALESCE((SELECT t.from_circle_id FROM student_transfers t WHERE t.student_id = ${alias}.id AND t.effective_from > ${dateSql} ORDER BY t.effective_from ASC LIMIT 1), ${alias}.circle_id)`;
 
 /** آخر يوم في الشهر `YYYY-MM` (لنسبة الكشف الشهري إلى حلقة الطالب في نهاية الشهر). */
 export function lastDayOfMonth(month: string): string {

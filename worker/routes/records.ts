@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Direction } from "../../shared/constants";
 import { countPages, countVerses, furthest, isValidRange, nextStart, rangeDirection, sardBand, sardScore, surahName, type Position } from "../../shared/quran";
 import type { AppEnv } from "../env";
-import { accessibleStudent, assertStageCircle, pickTeacherCircle, studentScope } from "../lib/access";
+import { accessibleStudent, assertStageCircle, datedRecordScope, pickTeacherCircle, studentForDate } from "../lib/access";
 import { requireAuth } from "../lib/auth";
 import { newId } from "../lib/crypto";
 import { DATE_RE, nextWeekdayDate, notTooFuture, todayHebron, weekdayNameAr } from "../lib/dates";
@@ -112,9 +112,13 @@ function reviewHint(direction: Direction, last: ReviewEnd | undefined) {
 
 dailyRoutes.get("/", requireAuth("admin", "secretary", "teacher", "stage_manager", "exam_committee"), async (c) => {
   const url = new URL(c.req.url);
-  const student = await accessibleStudent(c, url.searchParams.get("studentId") || "");
+  const studentId = url.searchParams.get("studentId") || "";
+  const scope = datedRecordScope(c, "d");
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 60));
-  const { results } = await c.env.DB.prepare(`${DAILY_SELECT} WHERE d.student_id = ? ORDER BY d.date DESC LIMIT ?`).bind(student.id, limit).all();
+  const { results } = await c.env.DB.prepare(`${DAILY_SELECT} JOIN students s ON s.id = d.student_id WHERE d.student_id = ? AND d.center_id = ?${scope.sql} ORDER BY d.date DESC LIMIT ?`)
+    .bind(studentId, c.get("auth").centerId, ...scope.binds, limit).all();
+  // عند غياب السجلات، أبقِ 404 للطالب غير الموجود أو الخارج عن نطاق المعلّم.
+  if (!results.length) await accessibleStudent(c, studentId);
   return c.json({ records: results });
 });
 
@@ -123,10 +127,10 @@ dailyRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_manage
   const auth = c.get("auth");
   const b = await parseBody(c, dailySchema);
   if (!notTooFuture(b.date)) fail(400, "لا يمكن التسجيل في تاريخ مستقبلي");
-  const student = await accessibleStudent(c, b.studentId);
+  const student = await studentForDate(c, b.studentId, b.date);
   if (student.archivedAt) fail(400, "الطالب مؤرشف");
-  const circleId = await c.env.DB.prepare("SELECT circle_id AS circleId FROM students WHERE id = ? AND center_id = ?").bind(student.id, auth.centerId).first<{ circleId: string | null }>();
-  if (!circleId?.circleId || !(await circleHasSession(c.env.DB, circleId.circleId, b.date))) {
+  const circleId = student.circleId;
+  if (!circleId || !(await circleHasSession(c.env.DB, circleId, b.date))) {
     fail(400, "لا يوجد موعد لهذه الحلقة في هذا اليوم");
   }
   const settings = await loadSettings(c.env.DB, auth.centerId);
@@ -191,7 +195,7 @@ dailyRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_manage
        next_memorize_to_surah = excluded.next_memorize_to_surah, next_memorize_to_ayah = excluded.next_memorize_to_ayah,
        next_review_from_surah = excluded.next_review_from_surah, next_review_from_ayah = excluded.next_review_from_ayah,
        next_review_to_surah = excluded.next_review_to_surah, next_review_to_ayah = excluded.next_review_to_ayah, next_note = excluded.next_note`
-  ).bind(id, auth.centerId, student.id, circleId.circleId, auth.userId, b.date, b.attendance, student.direction, from?.surah ?? null, from?.ayah ?? null, to?.surah ?? null, to?.ayah ?? null,
+  ).bind(id, auth.centerId, student.id, circleId, auth.userId, b.date, b.attendance, student.direction, from?.surah ?? null, from?.ayah ?? null, to?.surah ?? null, to?.ayah ?? null,
     verses, pages, b.grade, b.note, now, now,
     rFrom?.surah ?? null, rFrom?.ayah ?? null, rTo?.surah ?? null, rTo?.ayah ?? null, rVerses, rPages, b.review?.grade ?? "",
     nMemFrom?.surah ?? null, nMemFrom?.ayah ?? null, nMemTo?.surah ?? null, nMemTo?.ayah ?? null,
@@ -220,7 +224,7 @@ dailyRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_manage
   const nextChanged =
     !posEq(nMemFrom, existingMemFrom) || !posEq(nMemTo, existingMemTo) || !posEq(nRevFrom, existingRevFrom) || !posEq(nRevTo, existingRevTo);
   if ((nMemFrom || nRevFrom) && nextChanged) {
-    const { results: sched } = await c.env.DB.prepare("SELECT weekday FROM circle_schedule WHERE circle_id = ?").bind(circleId.circleId).all<{ weekday: number }>();
+    const { results: sched } = await c.env.DB.prepare("SELECT weekday FROM circle_schedule WHERE circle_id = ?").bind(circleId).all<{ weekday: number }>();
     const nextDate = nextWeekdayDate(b.date, sched.map((r) => r.weekday));
     const when = nextDate ? `${weekdayNameAr(nextDate)} ${nextDate}` : "اللقاء القادم";
     const rangeText = (from: Position, to: Position) => `من ${surahName(from.surah)} آية ${from.ayah} إلى ${from.surah === to.surah ? "آية" : `${surahName(to.surah)} آية`} ${to.ayah}`;
@@ -241,7 +245,7 @@ dailyRoutes.delete("/:id", requireAuth("admin", "secretary", "teacher", "stage_m
   const auth = c.get("auth");
   const rec = await c.env.DB.prepare("SELECT id, student_id AS studentId, date FROM daily_records WHERE id = ? AND center_id = ?").bind(c.req.param("id"), auth.centerId).first<{ id: string; studentId: string; date: string }>();
   if (!rec) fail(404, "السجل غير موجود");
-  await accessibleStudent(c, rec.studentId);
+  await studentForDate(c, rec.studentId, rec.date);
   await c.env.DB.prepare("DELETE FROM daily_records WHERE id = ?").bind(rec.id).run();
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "delete", entity: "daily", entityId: rec.id, details: rec.date });
   return c.json({ ok: true });
@@ -274,7 +278,7 @@ sardRoutes.get("/", requireAuth("admin", "secretary", "teacher", "stage_manager"
   const studentId = url.searchParams.get("studentId") || "";
   const page = Math.max(1, Number(url.searchParams.get("page")) || 1);
   const pageSize = 30;
-  const scope = studentScope(c);
+  const scope = datedRecordScope(c, "r");
   let where = `r.center_id = ?${scope.sql}`;
   const binds: unknown[] = [auth.centerId, ...scope.binds];
   if (studentId) { where += " AND r.student_id = ?"; binds.push(studentId); }
@@ -288,7 +292,7 @@ sardRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_manager
   const auth = c.get("auth");
   const b = await parseBody(c, sardSchema);
   if (!notTooFuture(b.date)) fail(400, "لا يمكن التسجيل في تاريخ مستقبلي");
-  const student = await accessibleStudent(c, b.studentId);
+  const student = await studentForDate(c, b.studentId, b.date);
   if (student.archivedAt) fail(400, "الطالب مؤرشف");
   if (!isValidRange(student.direction, b.from, b.to)) fail(400, "نهاية السرد يجب ألا تسبق بدايته وفق اتجاه حفظ الطالب");
   const settings = await loadSettings(c.env.DB, auth.centerId);
@@ -310,9 +314,9 @@ sardRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_manager
 
 sardRoutes.delete("/:id", requireAuth("admin", "secretary", "teacher", "stage_manager"), async (c) => {
   const auth = c.get("auth");
-  const rec = await c.env.DB.prepare("SELECT id, student_id AS studentId FROM sard_records WHERE id = ? AND center_id = ?").bind(c.req.param("id"), auth.centerId).first<{ id: string; studentId: string }>();
+  const rec = await c.env.DB.prepare("SELECT id, student_id AS studentId, date FROM sard_records WHERE id = ? AND center_id = ?").bind(c.req.param("id"), auth.centerId).first<{ id: string; studentId: string; date: string }>();
   if (!rec) fail(404, "السجل غير موجود");
-  await accessibleStudent(c, rec.studentId);
+  await studentForDate(c, rec.studentId, rec.date);
   await c.env.DB.prepare("DELETE FROM sard_records WHERE id = ?").bind(rec.id).run();
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "delete", entity: "sard", entityId: rec.id });
   return c.json({ ok: true });
