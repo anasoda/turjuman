@@ -3,7 +3,7 @@
 ## جلسة 2026-09-29 — نشر الخطط الشهرية وربط GitHub
 - تأكّد حساب Cloudflare `zaid.mosque@gmail.com` وأن الهجرة الوحيدة المعلّقة `0025_student_monthly_plans.sql`. طُبّقت على D1 البعيدة بنجاح ثم نُشرت النسخة بعد بناء الإنتاج؛ رقم الإصدار `8a729c97-9e38-4638-b485-5dce180cfb82` على `https://turjuman-v2.hayy-aid-cloudflare.workers.dev`.
 - أعاد `/api/health` الحالة 200، ولم تبق هجرات معلّقة. المستودع `https://github.com/anasoda/turjuman.git` وفرع `main` متطابقان مع آخر commit محلي قبل إرسال تغييرات هذه الجلسة.
-- ربط GitHub المباشر بـ Workers Builds يتطلب تثبيت تطبيق Cloudflare في GitHub عبر لوحة Cloudflare؛ متصفح العمل لا يحمل جلسة دخول إلى لوحة Cloudflare. متابعة الربط قيد العمل.
+- دُفع commit `0ade121` إلى `main` في `https://github.com/anasoda/turjuman.git` بعد تأكيد المالك هوية المستودع. أكمل المالك ربط GitHub في لوحة Cloudflare. تُرسل الآن دفعة توثيق صغيرة لاختبار البناء والنشر التلقائي؛ يلزم التحقق من نتيجة البناء بعد الدفع.
 
 ---
 
