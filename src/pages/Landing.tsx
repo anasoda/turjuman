@@ -63,7 +63,6 @@ export function Landing() {
         <span className="hero-orb" aria-hidden="true" />
         <div className="hero-bar">
           <span className="mini">{name}</span>
-          <Link className="btn small light" to="/login">{Icons.login}دخول</Link>
         </div>
         <div className="hero-emblem">
           <span className="ring"><StarRing /></span>
