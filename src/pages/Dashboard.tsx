@@ -32,7 +32,7 @@ const greg = new Intl.DateTimeFormat("ar-EG-u-nu-latn", { weekday: "long", day: 
 function Welcome() {
   const { user, settings } = useMe();
   const h = new Date().getHours();
-  const hello = h < 12 ? "صباح الخير" : "مساء الخير";
+  const hello = h < 12 ? "صباح الخير" : "طاب مساؤك";
   const now = new Date();
   return (
     <section className="welcome">
