@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../env";
 import { accessibleStudent, studentScope } from "../lib/access";
 import { requireAuth } from "../lib/auth";
+import { accessibleCourse } from "../lib/courses";
 import { newId } from "../lib/crypto";
 import { DATE_RE, notTooFuture } from "../lib/dates";
 import { notifyMany, studentRecipients } from "../lib/notify";
@@ -373,27 +374,43 @@ const courseSchema = z.object({
   startsOn: z.string().regex(DATE_RE).nullable().default(null),
   endsOn: z.string().regex(DATE_RE).nullable().default(null),
   status: z.enum(["active", "ended"]),
+  teacherId: z.string().min(1).nullable().default(null),
   studentIds: z.array(z.string().min(1)).max(500).default([])
 });
 
+/** شيخ الدورة: معلّم فعّال في المركز (مدير المرحلة يُخزَّن بدور teacher أيضاً). */
+async function validTeacher(c: import("hono").Context<AppEnv>, id: string | null): Promise<string | null> {
+  if (!id) return null;
+  const t = await c.env.DB.prepare("SELECT id FROM users WHERE id = ? AND center_id = ? AND role = 'teacher' AND active = 1").bind(id, c.get("auth").centerId).first();
+  if (!t) fail(400, "الشيخ المختار غير موجود ضمن كادر المركز");
+  return id;
+}
+
 courseRoutes.get("/", requireAuth("admin", "secretary", "teacher", "stage_manager", "exam_committee"), async (c) => {
   const auth = c.get("auth");
+  // المعلّم (ومدير المرحلة) يرى دوراته هو فقط؛ الدورات مستقلة عن الحلقات والمراحل.
+  const own = auth.role === "teacher" || auth.role === "stage_manager";
   const { results } = await c.env.DB.prepare(
-    `SELECT id, name, starts_on AS startsOn, ends_on AS endsOn, status,
-            (SELECT COUNT(*) FROM ajkam_course_students x WHERE x.course_id = c.id) AS studentCount
-       FROM ajkam_courses c WHERE center_id = ? ORDER BY status, created_at DESC`
-  ).bind(auth.centerId).all();
+    `SELECT c.id, c.name, c.starts_on AS startsOn, c.ends_on AS endsOn, c.status, c.teacher_id AS teacherId,
+            (SELECT display_name FROM users u WHERE u.id = c.teacher_id) AS teacherName,
+            (SELECT COUNT(*) FROM ajkam_course_students x WHERE x.course_id = c.id) AS studentCount,
+            (SELECT COUNT(*) FROM ajkam_sessions s WHERE s.course_id = c.id) AS sessionCount,
+            (SELECT s.covered_topic FROM ajkam_sessions s WHERE s.course_id = c.id ORDER BY s.held_on DESC LIMIT 1) AS lastTopic,
+            (SELECT ROUND(100.0 * SUM(CASE WHEN a.status IN ('present', 'late') THEN 1 ELSE 0 END) / COUNT(*))
+               FROM ajkam_attendance a JOIN ajkam_sessions s ON s.id = a.session_id
+              WHERE s.course_id = c.id AND a.status <> 'excused') AS attendancePct
+       FROM ajkam_courses c WHERE c.center_id = ?${own ? " AND c.teacher_id = ?" : ""} ORDER BY c.status, c.created_at DESC`
+  ).bind(auth.centerId, ...(own ? [auth.userId] : [])).all();
   return c.json({ courses: results });
 });
 
 courseRoutes.get("/:id", requireAuth("admin", "secretary", "teacher", "stage_manager", "exam_committee"), async (c) => {
   const auth = c.get("auth");
-  const course = await c.env.DB.prepare("SELECT id, name, starts_on AS startsOn, ends_on AS endsOn, status FROM ajkam_courses WHERE id = ? AND center_id = ?").bind(c.req.param("id"), auth.centerId).first();
-  if (!course) fail(404, "الدورة غير موجودة");
-  const scope = studentScope(c);
+  await accessibleCourse(c, c.req.param("id"), false);
+  const course = await c.env.DB.prepare("SELECT id, name, starts_on AS startsOn, ends_on AS endsOn, status, teacher_id AS teacherId FROM ajkam_courses WHERE id = ? AND center_id = ?").bind(c.req.param("id"), auth.centerId).first();
   const { results } = await c.env.DB.prepare(
-    `SELECT s.id, s.name FROM ajkam_course_students x JOIN students s ON s.id = x.student_id WHERE x.course_id = ?${scope.sql} ORDER BY s.name`
-  ).bind(c.req.param("id"), ...scope.binds).all();
+    "SELECT s.id, s.name FROM ajkam_course_students x JOIN students s ON s.id = x.student_id WHERE x.course_id = ? ORDER BY s.name"
+  ).bind(c.req.param("id")).all();
   return c.json({ course, students: results });
 });
 
@@ -411,9 +428,10 @@ courseRoutes.post("/", requireAuth("admin", "secretary"), async (c) => {
   const auth = c.get("auth");
   const b = await parseBody(c, courseSchema);
   const ids = await validStudents(c, b.studentIds);
+  const teacherId = await validTeacher(c, b.teacherId);
   const id = newId();
   await c.env.DB.batch([
-    c.env.DB.prepare("INSERT INTO ajkam_courses (id, center_id, name, starts_on, ends_on, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(id, auth.centerId, b.name, b.startsOn, b.endsOn, b.status, Date.now()),
+    c.env.DB.prepare("INSERT INTO ajkam_courses (id, center_id, name, starts_on, ends_on, status, teacher_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(id, auth.centerId, b.name, b.startsOn, b.endsOn, b.status, teacherId, Date.now()),
     ...ids.map((sid) => c.env.DB.prepare("INSERT INTO ajkam_course_students (course_id, student_id) VALUES (?, ?)").bind(id, sid))
   ]);
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "create", entity: "course", entityId: id, details: b.name });
@@ -427,8 +445,9 @@ courseRoutes.put("/:id", requireAuth("admin", "secretary"), async (c) => {
   if (!existing) fail(404, "الدورة غير موجودة");
   const b = await parseBody(c, courseSchema);
   const ids = await validStudents(c, b.studentIds);
+  const teacherId = await validTeacher(c, b.teacherId);
   await c.env.DB.batch([
-    c.env.DB.prepare("UPDATE ajkam_courses SET name = ?, starts_on = ?, ends_on = ?, status = ? WHERE id = ?").bind(b.name, b.startsOn, b.endsOn, b.status, id),
+    c.env.DB.prepare("UPDATE ajkam_courses SET name = ?, starts_on = ?, ends_on = ?, status = ?, teacher_id = ? WHERE id = ?").bind(b.name, b.startsOn, b.endsOn, b.status, teacherId, id),
     c.env.DB.prepare("DELETE FROM ajkam_course_students WHERE course_id = ?").bind(id),
     ...ids.map((sid) => c.env.DB.prepare("INSERT INTO ajkam_course_students (course_id, student_id) VALUES (?, ?)").bind(id, sid))
   ]);
@@ -441,7 +460,14 @@ courseRoutes.delete("/:id", requireAuth("admin", "secretary"), async (c) => {
   const id = c.req.param("id");
   const existing = await c.env.DB.prepare("SELECT id, name FROM ajkam_courses WHERE id = ? AND center_id = ?").bind(id, auth.centerId).first<{ id: string; name: string }>();
   if (!existing) fail(404, "الدورة غير موجودة");
-  await c.env.DB.batch([c.env.DB.prepare("DELETE FROM ajkam_course_students WHERE course_id = ?").bind(id), c.env.DB.prepare("DELETE FROM ajkam_courses WHERE id = ?").bind(id)]);
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM ajkam_attendance WHERE session_id IN (SELECT id FROM ajkam_sessions WHERE course_id = ?)").bind(id),
+    c.env.DB.prepare("DELETE FROM ajkam_sessions WHERE course_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM ajkam_notes WHERE course_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM ajkam_events WHERE course_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM ajkam_course_students WHERE course_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM ajkam_courses WHERE id = ?").bind(id)
+  ]);
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "delete", entity: "course", entityId: id, details: existing.name });
   return c.json({ ok: true });
 });

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { Field, Sheet, useAction, useUi } from "../components/ui";
 import { api } from "../lib/api";
 import { useDebounced, useFetch } from "../lib/hooks";
@@ -6,7 +7,7 @@ import { useMe } from "../lib/session";
 import type { Student } from "../lib/types";
 import { countAr, STUDENTS_AR } from "../lib/format";
 
-interface Course { id: string; name: string; startsOn: string | null; endsOn: string | null; status: "active" | "ended"; studentCount: number }
+interface Course { id: string; name: string; startsOn: string | null; endsOn: string | null; status: "active" | "ended"; studentCount: number; teacherId: string | null; teacherName: string | null; sessionCount: number; lastTopic: string | null; attendancePct: number | null }
 
 /** دورات الأحكام: الاسم والتواريخ والمشاركون والحالة (جارية/منتهية). */
 export function Courses() {
@@ -20,10 +21,15 @@ export function Courses() {
       {error && <div className="error-box">{error}</div>}
       <div className="list">
         {data?.courses.map((c) => (
-          <button key={c.id} type="button" className="card row-card" onClick={() => canManage && setForm(c)} style={{ cursor: canManage ? "pointer" : "default" }}>
-            <span className="grow"><b>{c.name}</b><small>{c.startsOn ?? "—"} ← {c.endsOn ?? "—"} · {countAr(c.studentCount, STUDENTS_AR)}</small></span>
+          <div key={c.id} className="card row-card" style={{ cursor: "default" }}>
+            <Link to={`/app/courses/${c.id}`} className="grow" style={{ color: "inherit", textDecoration: "none" }}>
+              <b>{c.name}</b>
+              <small>{c.teacherName ? `الشيخ: ${c.teacherName}` : "بلا شيخ"} · {countAr(c.studentCount, STUDENTS_AR)}</small>
+              <small>{c.sessionCount ? `${c.sessionCount} لقاء${c.attendancePct !== null ? ` · حضور ${c.attendancePct}٪` : ""}${c.lastTopic ? ` · آخر درس: ${c.lastTopic}` : ""}` : "لا لقاءات بعد"}</small>
+            </Link>
             <span className={`chip ${c.status === "ended" ? "gold" : ""}`}>{c.status === "active" ? "جارية" : "منتهية"}</span>
-          </button>
+            {canManage && <button className="btn ghost small" type="button" onClick={() => setForm(c)}>تعديل</button>}
+          </div>
         ))}
         {data && !data.courses.length && <div className="empty">لا توجد دورات بعد.</div>}
       </div>
@@ -40,6 +46,8 @@ function CourseForm({ course, onClose, onSaved }: { course: Course | null; onClo
   const debounced = useDebounced(query);
   const students = useFetch<{ students: Student[] }>(`/api/students?pageSize=100${debounced ? `&q=${encodeURIComponent(debounced)}` : ""}`);
   const current = useFetch<{ students: Array<{ id: string; name: string }> }>(course ? `/api/courses/${course.id}` : null);
+  const staff = useFetch<{ staff: Array<{ id: string; role: string; displayName: string; active: boolean }> }>("/api/staff");
+  const teachers = (staff.data?.staff ?? []).filter((s) => s.role === "teacher" && s.active);
   const [picked, setPicked] = useState<Map<string, { id: string; name: string; circleName?: string | null }> | null>(null);
   const selected: Map<string, { id: string; name: string; circleName?: string | null }> = picked ?? new Map((current.data?.students ?? []).map((s) => [s.id, s]));
   const visible = [...selected.values()].filter((s) => !students.data?.students.some((x) => x.id === s.id)).concat(students.data?.students ?? []);
@@ -48,7 +56,7 @@ function CourseForm({ course, onClose, onSaved }: { course: Course | null; onClo
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const body = { name: String(f.get("name")), startsOn: String(f.get("startsOn")) || null, endsOn: String(f.get("endsOn")) || null, status: String(f.get("status")), studentIds: [...selected.keys()] };
+    const body = { name: String(f.get("name")), startsOn: String(f.get("startsOn")) || null, endsOn: String(f.get("endsOn")) || null, status: String(f.get("status")), teacherId: String(f.get("teacherId")) || null, studentIds: [...selected.keys()] };
     if (await run(() => (course ? api(`/api/courses/${course.id}`, { method: "PUT", body }) : api("/api/courses", { method: "POST", body })), "تم الحفظ")) onSaved();
   };
   const remove = async () => {
@@ -64,6 +72,12 @@ function CourseForm({ course, onClose, onSaved }: { course: Course | null; onClo
           <Field label="تبدأ في"><input name="startsOn" type="date" defaultValue={course?.startsOn ?? ""} /></Field>
           <Field label="تنتهي في"><input name="endsOn" type="date" defaultValue={course?.endsOn ?? ""} /></Field>
         </div>
+        <Field label="شيخ الدورة" hint="يرى الدورة ويتابعها؛ لا يشترط أن يكون محفّظ الطلاب">
+          <select name="teacherId" defaultValue={course?.teacherId ?? ""}>
+            <option value="">بلا شيخ بعد</option>
+            {teachers.map((t) => <option key={t.id} value={t.id}>{t.displayName}</option>)}
+          </select>
+        </Field>
         <Field label="الحالة"><select name="status" defaultValue={course?.status ?? "active"}><option value="active">جارية</option><option value="ended">منتهية</option></select></Field>
         <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
           <legend className="muted" style={{ fontSize: ".85rem", marginBottom: 4 }}>المشاركون ({selected.size})</legend>

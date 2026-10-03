@@ -9,6 +9,7 @@ import { useFetch } from "../lib/hooks";
 import { useMe } from "../lib/session";
 import { SURAHS } from "@shared/quran-data";
 import { AbsenceReport, ScheduleCard } from "./ScheduleAbsence";
+import { AhkamCards } from "./AhkamPortal";
 
 interface Summary {
   student: { id: string; name: string; direction: Direction; lastSurah: number; lastAyah: number; circleName: string | null; nextStart: Position | null; reviewLast: Position | null };
@@ -67,6 +68,7 @@ export function StudentPortal({ studentId }: { studentId?: string } = {}) {
 
       {!staffView && <AbsenceReport studentId={studentId} />}
       {!staffView && <ScheduleCard studentId={studentId} />}
+      {user.role === "guardian" && studentId && <AhkamCards studentId={studentId} />}
 
       <div className="tabs" role="tablist">{TABS.map(([k, label]) => <button key={k} type="button" aria-pressed={tab === k} onClick={() => setTab(k)}>{label}</button>)}</div>
 

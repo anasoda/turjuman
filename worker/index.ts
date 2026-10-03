@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { AppEnv } from "./env";
+import { ajkamRoutes } from "./routes/ajkam";
 import { authRoutes } from "./routes/auth";
 import { circleRoutes } from "./routes/circles";
 import { guardianRoutes } from "./routes/guardians";
@@ -32,6 +33,7 @@ app.route("/api/daily", dailyRoutes);
 app.route("/api/sard", sardRoutes);
 app.route("/api/tests", testRoutes);
 app.route("/api/reports", reportRoutes);
+app.route("/api/courses", ajkamRoutes);
 app.route("/api/courses", courseRoutes);
 app.route("/api/portal", portalRoutes);
 app.route("/api/notifications", notificationRoutes);

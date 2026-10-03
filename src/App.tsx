@@ -7,6 +7,7 @@ import { CenterIdentity } from "./pages/CenterIdentity";
 import { Circles } from "./pages/Circles";
 import { Guardians } from "./pages/Guardians";
 import { Courses } from "./pages/Courses";
+import { CourseDetail } from "./pages/CourseDetail";
 import { Daily } from "./pages/Daily";
 import { Reports } from "./pages/Reports";
 import { Sard } from "./pages/Sard";
@@ -61,6 +62,7 @@ export function App() {
         <Route path="tests" element={<Only roles={["admin", "secretary", "teacher", "stage_manager", "exam_committee"]}><Tests /></Only>} />
         <Route path="reports" element={<Only roles={["admin", "secretary", "teacher", "stage_manager", "exam_committee"]}><Reports /></Only>} />
         <Route path="courses" element={<Only roles={["admin", "secretary", "teacher", "stage_manager", "exam_committee"]}><Courses /></Only>} />
+        <Route path="courses/:id" element={<Only roles={["admin", "secretary", "teacher", "stage_manager", "exam_committee"]}><CourseDetail /></Only>} />
         <Route path="notifications" element={<Notifications />} />
         <Route path="announcements" element={<Only roles={["admin", "secretary", "teacher", "stage_manager", "exam_committee"]}><Announcements /></Only>} />
         <Route path="honor" element={<Honor />} />

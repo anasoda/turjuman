@@ -240,8 +240,10 @@ await test("دورات الأحكام: المدير يديرها والزائر 
   assert.equal(c.status, 201, JSON.stringify(c.data));
   assert.equal((await call("/api/courses", { method: "POST", cookie: teacher, body: { name: "دورة", status: "active", studentIds: [] } })).status, 403);
   assert.ok((await call(`/api/public/stats?centerId=${G}`)).data.activeCourses >= 1);
-  const detail = (await call(`/api/courses/${c.data.id}`, { cookie: teacher })).data;
-  assert.equal(detail.students.length, 2, "المعلّم يرى طلاب حلقته في الدورة");
+  // الدورات مستقلة عن الحلقات: المعلّم لا يرى دورة ليس هو شيخها، والمدير يرى كل المشاركين
+  assert.equal((await call(`/api/courses/${c.data.id}`, { cookie: teacher })).status, 404, "المعلّم لا يرى دورة ليس شيخها");
+  const detail = (await call(`/api/courses/${c.data.id}`, { cookie: admin })).data;
+  assert.equal(detail.students.length, 2);
   assert.equal((await call(`/api/courses/${c.data.id}`, { method: "PUT", cookie: admin, body: { name: "دورة تأهيلية تجريبية", startsOn: today, endsOn: today, status: "ended", studentIds: [s1.id] } })).status, 200);
   assert.equal((await call(`/api/courses/${c.data.id}`, { method: "DELETE", cookie: admin })).status, 200);
 });
