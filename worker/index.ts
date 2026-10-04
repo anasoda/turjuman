@@ -1,8 +1,11 @@
 import { Hono } from "hono";
+import { runScheduledBackup } from "./lib/backup";
+import type { Env } from "./env";
 import { HTTPException } from "hono/http-exception";
 import type { AppEnv } from "./env";
 import { ajkamRoutes } from "./routes/ajkam";
 import { authRoutes } from "./routes/auth";
+import { cancellationRoutes } from "./routes/cancellations";
 import { circleRoutes } from "./routes/circles";
 import { guardianRoutes } from "./routes/guardians";
 import { auditRoutes, centerRoutes, ownerRoutes, publicRoutes, settingsRoutes } from "./routes/misc";
@@ -28,6 +31,7 @@ app.route("/api/auth", authRoutes);
 app.route("/api/staff", staffRoutes);
 app.route("/api/students", studentRoutes);
 app.route("/api/circles", circleRoutes);
+app.route("/api/cancellations", cancellationRoutes);
 app.route("/api/guardians", guardianRoutes);
 app.route("/api/daily", dailyRoutes);
 app.route("/api/sard", sardRoutes);
@@ -63,4 +67,10 @@ app.onError((err, c) => {
 });
 app.notFound((c) => c.json({ error: "غير موجود" }, 404));
 
-export default app;
+export default {
+  fetch: app.fetch,
+  /** Cron Trigger (wrangler.jsonc): نسخة احتياطية أسبوعية لكل مركز فعّال إلى R2 */
+  scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(runScheduledBackup(env));
+  }
+};

@@ -23,6 +23,12 @@ describe("طلاب يحتاجون متابعة", () => {
     expect(r).toEqual([{ kind: "noRecite", days: 7, never: false }]);
   });
 
+  it("الحصة الملغاة لا تُحتسب انقطاعاً: العدّ من آخر إلغاء إن كان أحدث", () => {
+    expect(kinds({ lastReciteDate: "2026-10-05", lastCancelledDate: "2026-10-19" })).toEqual([]);
+    expect(kinds({ lastReciteDate: "2026-10-05", lastCancelledDate: "2026-10-01" })).toEqual(["noRecite"]);
+    expect(kinds({ lastReciteDate: "2026-10-05", lastCancelledDate: null })).toEqual(["noRecite"]);
+  });
+
   it("بلا تسميع قط: العدّ من تاريخ الالتحاق، ومن التحق حديثاً لا يُنبَّه", () => {
     expect(followUpReasons({ ...base, lastReciteDate: null, joinedAt: "2026-10-01" }, TH)).toEqual([{ kind: "noRecite", days: 19, never: true }]);
     expect(kinds({ lastReciteDate: null, joinedAt: "2026-10-18" })).toEqual([]);

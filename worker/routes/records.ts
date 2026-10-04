@@ -98,8 +98,9 @@ dailyRoutes.get("/board", requireAuth("admin", "secretary", "teacher", "stage_ma
   const lastRev = await lastReviews(c.env.DB, auth.centerId, circleId, date);
   const { results: notices } = await c.env.DB.prepare(`SELECT n.student_id AS studentId, n.reason FROM absence_notices n JOIN students s ON s.id = n.student_id WHERE n.center_id = ? AND ${circleOnSql("s")} = ? AND n.date = ?`).bind(auth.centerId, date, circleId, date).all<{ studentId: string; reason: string }>();
   const noticeBy = new Map(notices.map((n) => [n.studentId, n.reason]));
+  const cancellation = await c.env.DB.prepare("SELECT id, reason FROM session_cancellations WHERE circle_id = ? AND date = ?").bind(circleId, date).first<{ id: string; reason: string }>();
   return c.json({
-    date, circleId, circleName: circle.name, scheduled,
+    date, circleId, circleName: circle.name, scheduled, cancellation: cancellation ?? null,
     rows: students.map((s) => ({ student: { ...s, nextStart: nextStart(s.direction, { surah: s.lastSurah, ayah: s.lastAyah }), ...reviewHint(s.direction, lastRev.get(s.id), s.reviewStartSurah, s.reviewStartAyah) }, record: byStudent.get(s.id) ?? null, absenceNotice: noticeBy.get(s.id) ?? null }))
   });
 });
@@ -138,6 +139,8 @@ dailyRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_manage
   if (student.archivedAt) fail(400, "الطالب مؤرشف");
   const circleId = student.circleId;
   if (!circleId) fail(400, "الطالب غير مسجَّل في حلقة");
+  const cancelled = await c.env.DB.prepare("SELECT reason FROM session_cancellations WHERE circle_id = ? AND date = ?").bind(circleId, b.date).first<{ reason: string }>();
+  if (cancelled) fail(409, `حصة هذا اليوم ملغاة (${cancelled.reason})؛ أعدها من لوحة التسميع إن أردت تسجيل متابعة`);
   // قرار المالك (البند 4): التسجيل مسموح دائماً حتى خارج جدول الحلقة (حصة تعويضية/إضافية)؛ الجدول تنبيه فقط
   const offSchedule = !(await circleHasSession(c.env.DB, circleId, b.date));
   const settings = await loadSettings(c.env.DB, auth.centerId);

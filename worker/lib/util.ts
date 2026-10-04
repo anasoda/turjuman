@@ -16,7 +16,7 @@ export async function parseBody<S extends ZodTypeAny>(c: Context<AppEnv>, schema
   return res.data;
 }
 
-export function fail(status: 400 | 401 | 403 | 404 | 409 | 429, message: string): never {
+export function fail(status: 400 | 401 | 403 | 404 | 409 | 429 | 503, message: string): never {
   throw new HTTPException(status, { message });
 }
 

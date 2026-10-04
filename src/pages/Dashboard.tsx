@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { CancellationNotices } from "../components/CancellationNotices";
 import { Link, useSearchParams } from "react-router-dom";
 import { ROLE_LABELS } from "@shared/constants";
 import { useFetch } from "../lib/hooks";
@@ -95,6 +96,7 @@ function GuardianHome() {
           ))}
         </div>
       )}
+      <CancellationNotices studentName={kids.find((k) => k.id === current)?.name} />
       <StudentPortal key={current} studentId={current} />
     </>
   );

@@ -12,7 +12,8 @@ import { api } from "../lib/api";
 import { initials, useDebounced, useFetch, useWantsNew } from "../lib/hooks";
 import { useMe } from "../lib/session";
 import type { Circle, Student } from "../lib/types";
-import { StudentTools } from "./StudentExtras";
+import { PhotoControls, StudentTools } from "./StudentExtras";
+import { PhotoLightbox } from "../components/PhotoLightbox";
 import { countAr, fmtDay, fmtPos, fmtPosPage, STUDENTS_AR, todayIso } from "../lib/format";
 
 const PAGE = 30;
@@ -133,6 +134,8 @@ function StudentDetail({ student: s, circles, onClose, onEdit, onChanged }: { st
   const surah = SURAHS[s.lastSurah - 1]?.[0] ?? "";
   const full = useFetch<{ student: Student }>(`/api/students/${s.id}`);
   const guardians = full.data?.student.guardians ?? [];
+  const photo = full.data?.student.photo;
+  const [zoom, setZoom] = useState(false);
 
   if (mode === "move") return <MoveSheet s={s} circles={circles} onClose={() => setMode("")} onDone={onChanged} />;
   if (mode === "archive") return <ArchiveSheet s={s} onClose={() => setMode("")} onDone={onChanged} />;
@@ -140,48 +143,77 @@ function StudentDetail({ student: s, circles, onClose, onEdit, onChanged }: { st
 
   return (
     <Sheet title={s.name} onClose={onClose}>
-      <dl className="kv">
-        <dt>الحلقة</dt><dd>{s.circleName ?? "—"}</dd>
-        <dt>رقم الهوية</dt><dd dir="ltr" style={{ textAlign: "end" }}>{s.nationalId}</dd>
-        <dt>الميلاد</dt><dd>{s.birth}</dd>
-        <dt>الجنس</dt><dd>{GENDER_LABELS[s.gender]}</dd>
-        {full.data?.student.pendingTransfer && <><dt>نقل مرتَّب</dt><dd>إلى {full.data.student.pendingTransfer.toCircleName} من {fmtDay(full.data.student.pendingTransfer.effectiveFrom)}</dd></>}
-        <dt>اتجاه الحفظ</dt><dd>{DIRECTION_LABELS[s.direction]}</dd>
-        <dt>موضع الحفظ الجديد</dt><dd>سورة {surah}{s.lastAyah ? ` — آية ${s.lastAyah}` : " (لم يبدأ فيها)"}</dd>
-        <dt>موضع المراجعة</dt><dd>{s.reviewSurah ? fmtPosPage({ surah: s.reviewSurah, ayah: s.reviewAyah! }) : "لم يُحدّد بعد"}</dd>
-        <dt>خطة الحفظ لهذا الشهر</dt><dd>{s.monthlyPlanPages} صفحة</dd>
-        <dt>خطة المراجعة لهذا الشهر</dt><dd>{s.monthlyReviewPlanPages} صفحة</dd>
-        <dt>آخر دورة أحكام</dt><dd>{s.ajkamCourse || "—"}</dd>
-      </dl>
-
-      <div className="contact-block">
-        <ContactRow cc={s.phoneCc} national={s.phoneNational} label={s.name} title="جوال الطالب" subject={`بخصوص الطالب ${s.name}`} />
-        {!s.phoneNational && !guardians.length && <small className="muted">لا أرقام تواصل مسجَّلة — أضفها من «تعديل» أو من شاشة «أولياء الأمور».</small>}
-      </div>
-
-      {!!guardians.length && (
-        <div className="contact-block">
-          <b>ولي الأمر</b>
-          {guardians.map((g) => (
-            <div key={g.id}>
-              <Link to={`/app/guardians?q=${encodeURIComponent(g.nationalId ?? g.name)}`} style={{ textDecoration: "none", color: "inherit", display: "block" }}>
-                <ContactRow cc={g.waCc} national={g.waNational} callNational={g.callPhone} label={g.name}
-                  title={`${RELATION_LABELS[g.relation]}: ${g.name}`} subject={`بخصوص الطالب ${s.name}`}
-                  templates={{ guardian: g.name, students: [{ name: s.name, circle: s.circleName, memorized: s.memorizedParts, plan: s.monthlyPlanPages,
-                    position: `سورة ${surah}${s.lastAyah ? ` — آية ${s.lastAyah}` : ""}` }] }} />
-              </Link>
-            </div>
-          ))}
+      <div className="sd-hero">
+        <button type="button" className="sd-photo" disabled={!photo} onClick={() => setZoom(true)} aria-label={photo ? "عرض الصورة كاملة" : "لا توجد صورة"}>
+          {photo ? <img src={photo} alt="" /> : initials(s.name)}
+        </button>
+        <div className="sd-id">
+          <div className="sd-chips">
+            <span className="chip">{s.circleName ?? "بلا حلقة"}</span>
+            <span className="chip">{GENDER_LABELS[s.gender]}</span>
+            <span className="chip">{DIRECTION_LABELS[s.direction]}</span>
+          </div>
+          {canEdit && <PhotoControls student={s} photo={photo} onUpdated={() => void full.reload()} />}
         </div>
-      )}
-      {canEdit && <StudentTools student={s} canHonor={isAdminish} onChanged={onChanged} />}
-      <div className="actions">
-        {canEdit && <button className="btn small" type="button" onClick={() => setMode("plan")}>خطة الشهر</button>}
-        {canEdit && <button className="btn small" type="button" onClick={onEdit}>تعديل</button>}
-        {canEditFully && <button className="btn ghost small" type="button" onClick={() => setMode("move")}>نقل إلى حلقة أخرى</button>}
-        {isAdminish && <Link className="btn ghost small" to="/app/guardians">أولياء الأمور</Link>}
-        {isAdminish && <button className="btn ghost danger small" type="button" onClick={() => setMode("archive")}>أرشفة</button>}
       </div>
+
+      <section className="sd-section">
+        <h3>البيانات الشخصية</h3>
+        <dl className="sd-grid">
+          <div className="sd-tile"><dt>رقم الهوية</dt><dd dir="ltr" style={{ textAlign: "end" }}>{s.nationalId}</dd></div>
+          <div className="sd-tile"><dt>الميلاد</dt><dd>{s.birth}</dd></div>
+          {full.data?.student.pendingTransfer && <div className="sd-tile wide"><dt>نقل مرتَّب</dt><dd>إلى {full.data.student.pendingTransfer.toCircleName} من {fmtDay(full.data.student.pendingTransfer.effectiveFrom)}</dd></div>}
+        </dl>
+      </section>
+
+      <section className="sd-section">
+        <h3>مسيرة الحفظ</h3>
+        <dl className="sd-grid">
+          <div className="sd-tile wide"><dt>موضع الحفظ الجديد</dt><dd>سورة {surah}{s.lastAyah ? ` — آية ${s.lastAyah}` : " (لم يبدأ فيها)"}</dd></div>
+          <div className="sd-tile wide"><dt>موضع المراجعة</dt><dd>{s.reviewSurah ? fmtPosPage({ surah: s.reviewSurah, ayah: s.reviewAyah! }) : "لم يُحدّد بعد"}</dd></div>
+          <div className="sd-tile"><dt>خطة الحفظ لهذا الشهر</dt><dd>{s.monthlyPlanPages} صفحة</dd></div>
+          <div className="sd-tile"><dt>خطة المراجعة لهذا الشهر</dt><dd>{s.monthlyReviewPlanPages} صفحة</dd></div>
+          <div className="sd-tile"><dt>آخر دورة أحكام</dt><dd>{s.ajkamCourse || "—"}</dd></div>
+        </dl>
+      </section>
+
+      <section className="sd-section">
+        <h3>التواصل</h3>
+        {(s.phoneNational || !guardians.length) && (
+          <div className="contact-block">
+            <ContactRow cc={s.phoneCc} national={s.phoneNational} label={s.name} title="جوال الطالب" subject={`بخصوص الطالب ${s.name}`} />
+            {!s.phoneNational && !guardians.length && <small className="muted">لا أرقام تواصل مسجَّلة — أضفها من «تعديل» أو من شاشة «أولياء الأمور».</small>}
+          </div>
+        )}
+        {guardians.map((g) => (
+          <div key={g.id} className="contact-block">
+            <Link to={`/app/guardians?q=${encodeURIComponent(g.nationalId ?? g.name)}`} style={{ textDecoration: "none", color: "inherit", display: "block" }}>
+              <ContactRow cc={g.waCc} national={g.waNational} callNational={g.callPhone} label={g.name}
+                title={`${RELATION_LABELS[g.relation]}: ${g.name}`} subject={`بخصوص الطالب ${s.name}`}
+                templates={{ guardian: g.name, students: [{ name: s.name, circle: s.circleName, memorized: s.memorizedParts, plan: s.monthlyPlanPages,
+                  position: `سورة ${surah}${s.lastAyah ? ` — آية ${s.lastAyah}` : ""}` }] }} />
+            </Link>
+          </div>
+        ))}
+      </section>
+
+      {canEdit && (
+        <section className="sd-section">
+          <h3>الإجراءات</h3>
+          <div className="actions">
+            <button className="btn small" type="button" onClick={() => setMode("plan")}>خطة الشهر</button>
+            <button className="btn small" type="button" onClick={onEdit}>تعديل</button>
+          </div>
+          <StudentTools student={s} canHonor={isAdminish} section="print" />
+          <div className="actions">
+            <StudentTools student={s} canHonor={isAdminish} section="manage" />
+            {canEditFully && <button className="btn ghost small" type="button" onClick={() => setMode("move")}>نقل إلى حلقة أخرى</button>}
+            {isAdminish && <Link className="btn ghost small" to="/app/guardians">أولياء الأمور</Link>}
+          </div>
+          {isAdminish && <div className="sd-danger"><button className="btn ghost danger small" type="button" onClick={() => setMode("archive")}>أرشفة الطالب</button></div>}
+        </section>
+      )}
+      {zoom && photo && <PhotoLightbox src={photo} alt={`صورة ${s.name}`} onClose={() => setZoom(false)} />}
     </Sheet>
   );
 }

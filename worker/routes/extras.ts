@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { BACKUP_KEEP, BACKUP_NAME_RE, backupCenter, backupPrefix, buildCenterExport } from "../lib/backup";
 import type { Context } from "hono";
 import { z } from "zod";
 import { PRAYER_SLOTS } from "../../shared/constants";
@@ -315,7 +316,7 @@ statsRoutes.get("/students", requireAuth("admin", "secretary", "stage_manager", 
 /**
  * «طلاب يحتاجون متابعة» (§14.7): غياب متكرر هذا الشهر، أو بلا تسميع منذ N يوماً، أو تأخر عن الخطة الشهرية.
  * الحدود من إعدادات المركز. النطاق: المعلّم حلقاته، مدير المرحلة مراحله، الإدارة الكل (studentScope).
- * الطالب بلا حلقة لا يُتابَع بعد. حالة «ملغاة» للحصة (البند 12) لم تُنفَّذ بعد فلا استثناء لها هنا.
+ * الطالب بلا حلقة لا يُتابَع بعد. الحصة الملغاة (البند 12) لا تُحتسب انقطاعاً: يبدأ عدّ «بلا تسميع» من آخر إلغاء إن كان أحدث.
  */
 statsRoutes.get("/follow-up", requireAuth("admin", "secretary", "teacher", "stage_manager"), async (c) => {
   const auth = c.get("auth");
@@ -341,12 +342,14 @@ statsRoutes.get("/follow-up", requireAuth("admin", "secretary", "teacher", "stag
     ).bind(auth.centerId, ...ids).all<{ studentId: string; last: string }>();
     for (const r of results) lastRecite.set(r.studentId, r.last);
   }
+  const { results: cancelled } = await c.env.DB.prepare("SELECT circle_id AS circleId, MAX(date) AS last FROM session_cancellations WHERE center_id = ? AND date <= ? GROUP BY circle_id").bind(auth.centerId, today).all<{ circleId: string; last: string }>();
+  const lastCancelled = new Map(cancelled.map((r) => [r.circleId, r.last]));
   const list = students
     .map((s) => {
       const r = rowBy.get(s.id);
       const reasons = followUpReasons({
         absences: r?.absent ?? 0, lastReciteDate: lastRecite.get(s.id) ?? null, joinedAt: s.joinedAt,
-        planPages: r?.planPages ?? 0, pages: r?.pages ?? 0, today
+        planPages: r?.planPages ?? 0, pages: r?.pages ?? 0, today, lastCancelledDate: lastCancelled.get(s.circleId) ?? null
       }, thresholds);
       return { id: s.id, name: s.name, circleId: s.circleId, circleName: s.circleName, lastReciteDate: lastRecite.get(s.id) ?? null, reasons };
     })
@@ -373,37 +376,38 @@ export const exportRoutes = new Hono<AppEnv>();
 
 exportRoutes.get("/", requireAuth("admin"), async (c) => {
   const auth = c.get("auth");
-  const q = async (sql: string) => (await c.env.DB.prepare(sql).bind(auth.centerId).all()).results;
-  const data = {
-    exportedAt: new Date().toISOString(),
-    centerId: auth.centerId,
-    center: (await c.env.DB.prepare("SELECT * FROM centers WHERE id = ?").bind(auth.centerId).first()) ?? null,
-    settings: await q("SELECT key, value_json AS value FROM center_settings WHERE center_id = ?"),
-    // لا تُصدَّر كلمات المرور ولا تجزئتها أبداً
-    users: await q("SELECT id, center_id, role, username, display_name, active, created_at, updated_at FROM users WHERE center_id = ?"),
-    staffProfiles: await q("SELECT p.* FROM staff_profiles p JOIN users u ON u.id = p.user_id WHERE u.center_id = ?"),
-    stageManagers: await q("SELECT * FROM stage_managers WHERE center_id = ?"),
-    circles: await q("SELECT * FROM circles WHERE center_id = ?"),
-    circleTeachers: await q("SELECT ct.* FROM circle_teachers ct JOIN circles c ON c.id = ct.circle_id WHERE c.center_id = ?"),
-    students: await q("SELECT * FROM students WHERE center_id = ?"),
-    guardians: await q("SELECT * FROM guardians WHERE center_id = ?"),
-    dailyRecords: await q("SELECT * FROM daily_records WHERE center_id = ?"),
-    sardRecords: await q("SELECT * FROM sard_records WHERE center_id = ?"),
-    tests: await q("SELECT * FROM tests WHERE center_id = ?"),
-    monthlyReports: await q("SELECT * FROM monthly_reports WHERE center_id = ?"),
-    ajkamCourses: await q("SELECT * FROM ajkam_courses WHERE center_id = ?"),
-    courseStudents: await q("SELECT cs.* FROM ajkam_course_students cs JOIN ajkam_courses ac ON ac.id = cs.course_id WHERE ac.center_id = ?"),
-    notifications: await q("SELECT * FROM notifications WHERE center_id = ?"),
-    announcements: await q("SELECT * FROM announcements WHERE center_id = ?"),
-    absenceNotices: await q("SELECT * FROM absence_notices WHERE center_id = ?"),
-    prayerTimes: await q("SELECT * FROM prayer_times WHERE center_id = ?"),
-    staffAttendance: await q("SELECT * FROM staff_attendance WHERE center_id = ?"),
-    schedule: await q("SELECT * FROM circle_schedule WHERE center_id = ?"),
-    studentNotes: await q("SELECT * FROM student_notes WHERE center_id = ?"),
-    auditLog: await q("SELECT * FROM audit_log WHERE center_id = ?")
-  };
+  const data = await buildCenterExport(c.env.DB, auth.centerId);
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "export", entity: "center" });
   return c.json(data);
+});
+
+/** النسخ الدورية المحفوظة في R2 لمركز المدير فقط (البادئة تحمل معرّف المركز من الجلسة). */
+function backupsBucket(c: Context<AppEnv>): R2Bucket {
+  if (!c.env.BACKUPS) fail(503, "مخزن النسخ الاحتياطية غير مفعّل على الخادم بعد");
+  return c.env.BACKUPS;
+}
+exportRoutes.get("/backups", requireAuth("admin"), async (c) => {
+  const prefix = backupPrefix(c.get("auth").centerId);
+  const listed = await backupsBucket(c).list({ prefix });
+  const backups = listed.objects
+    .map((o) => ({ name: o.key.slice(prefix.length), size: o.size, uploadedAt: o.uploaded.toISOString() }))
+    .filter((o) => BACKUP_NAME_RE.test(o.name))
+    .sort((a, b) => b.name.localeCompare(a.name));
+  return c.json({ backups, keep: BACKUP_KEEP });
+});
+exportRoutes.post("/backups/run", requireAuth("admin"), async (c) => {
+  const auth = c.get("auth");
+  backupsBucket(c);
+  const r = await backupCenter(c.env, auth.centerId);
+  await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "backup", entity: "center", details: r.key });
+  return c.json({ ok: true, size: r.size, pruned: r.pruned }, 201);
+});
+exportRoutes.get("/backups/:name", requireAuth("admin"), async (c) => {
+  const name = c.req.param("name");
+  if (!BACKUP_NAME_RE.test(name)) fail(404, "النسخة غير موجودة");
+  const object = await backupsBucket(c).get(backupPrefix(c.get("auth").centerId) + name);
+  if (!object) fail(404, "النسخة غير موجودة");
+  return new Response(object.body, { headers: { "content-type": "application/gzip", "content-disposition": `attachment; filename="turjuman-${name}"` } });
 });
 
 /* ============================ لوحة مالك النظام (عدة مراكز) ============================ */

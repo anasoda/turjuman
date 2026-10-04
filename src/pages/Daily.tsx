@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import type { Direction } from "@shared/constants";
 import { countPages, countVerses, isValidRange, mushafPageFor, nextStart, rangeDirection, type Position } from "@shared/quran";
+import { CancelSessionBar } from "../components/CancelSession";
 import { PositionPicker } from "../components/PositionPicker";
 import { Field, Sheet, useAction, useUi } from "../components/ui";
 import { api } from "../lib/api";
@@ -18,7 +19,7 @@ interface DailyRecord {
   nextMemorizeFromSurah: number | null; nextMemorizeFromAyah: number | null; nextMemorizeToSurah: number | null; nextMemorizeToAyah: number | null;
   nextReviewFromSurah: number | null; nextReviewFromAyah: number | null; nextReviewToSurah: number | null; nextReviewToAyah: number | null; nextNote: string;
 }
-interface Board { date: string; circleId: string | null; circleName?: string; scheduled?: boolean; rows: Array<{ student: BoardStudent; record: DailyRecord | null; absenceNotice: string | null }> }
+interface Board { date: string; circleId: string | null; circleName?: string; scheduled?: boolean; cancellation?: { id: string; reason: string } | null; rows: Array<{ student: BoardStudent; record: DailyRecord | null; absenceNotice: string | null }> }
 
 /** التسميع اليومي: لوحة طلاب الحلقة ليوم محدد، والضغط على طالب يفتح نموذج الحضور والتسميع. */
 export function Daily() {
@@ -53,12 +54,13 @@ export function Daily() {
         )}
       </div>
       {board.error && <div className="error-box">{board.error}</div>}
+      {board.data?.circleId && <CancelSessionBar circleId={board.data.circleId} date={date} cancellation={board.data.cancellation ?? null} onChanged={board.reload} />}
       {board.data?.circleId && board.data.scheduled === false && (
         <div className="notice-box" style={{ marginBottom: 12 }}>تنبيه: هذا اليوم ليس من جدول الحلقة. يمكنك التسجيل إن كانت حصة تعويضية أو إضافية.</div>
       )}
       <div className="list">
         {rows.map(({ student, record, absenceNotice }) => (
-          <button key={student.id} type="button" className="card row-card" onClick={() => setEditing({ student, record })}>
+          <button key={student.id} type="button" className="card row-card" disabled={!!board.data?.cancellation && !record} onClick={() => setEditing({ student, record })}>
             <span className="avatar">{initials(student.name)}</span>
             <span className="grow">
               <b>{student.name}</b>

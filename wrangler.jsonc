@@ -16,6 +16,11 @@
 		"run_worker_first": ["/api/*"],
 		"not_found_handling": "single-page-application"
 	},
+	// نسخ احتياطي أسبوعي إلى R2 — معطّل حتى يُفعَّل R2 من لوحة Cloudflare (خطأ 10042). للتفعيل:
+	//   1) فعّل R2 من لوحة Cloudflare   2) npx wrangler r2 bucket create turjuman-backups
+	//   3) أزل التعليق عن السطرين التاليين ثم انشر. (الخميس 21:00 UTC = منتصف ليل الجمعة بتوقيت المركز تقريباً)
+	// "triggers": { "crons": ["0 21 * * 4"] },
+	// "r2_buckets": [{ "binding": "BACKUPS", "bucket_name": "turjuman-backups" }],
 	"d1_databases": [
 		{
 			"binding": "DB",

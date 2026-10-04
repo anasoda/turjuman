@@ -3,6 +3,8 @@ import type { Role } from "../shared/constants";
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
+  /** مخزن R2 للنسخ الاحتياطية الدورية؛ غائب = تُتخطّى النسخ الدورية دون أن يتأثر التطبيق */
+  BACKUPS?: R2Bucket;
   /** سرّ توقيع الجلسات — يُضبط بـ wrangler secret ولا قيمة افتراضية له */
   JWT_SECRET: string;
   /** مفتاح مالك النظام لإنشاء المراكز — يُضبط بـ wrangler secret */

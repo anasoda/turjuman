@@ -26,6 +26,8 @@ export interface FollowUpInput {
   pages: number;
   /** اليوم بتوقيت المركز YYYY-MM-DD */
   today: string;
+  /** آخر يوم أُلغيت فيه حصة حلقته (حتى اليوم)؛ لا يُحتسب انقطاع قبله لأن الطالب لم يكن بإمكانه الحضور */
+  lastCancelledDate?: string | null;
 }
 
 export type FollowUpReason =
@@ -43,7 +45,8 @@ export function followUpReasons(input: FollowUpInput, th: FollowUpThresholds): F
   const reasons: FollowUpReason[] = [];
   if (input.absences >= th.absenceCount) reasons.push({ kind: "absence", count: input.absences });
 
-  const ref = input.lastReciteDate ?? input.joinedAt;
+  let ref = input.lastReciteDate ?? input.joinedAt;
+  if (ref && input.lastCancelledDate && input.lastCancelledDate > ref.slice(0, 10)) ref = input.lastCancelledDate;
   if (ref) {
     const days = daysBetween(ref.slice(0, 10), input.today);
     if (days >= th.noReciteDays) reasons.push({ kind: "noRecite", days, never: input.lastReciteDate === null });

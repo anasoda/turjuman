@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { BackupsCard } from "../components/BackupsCard";
 import { Link } from "react-router-dom";
 import { MIN_PASSWORD } from "@shared/constants";
 import { Field, Icons, Sheet, useAction, useUi } from "../components/ui";
@@ -78,6 +79,7 @@ export function More() {
         {admin && link("/app/center", "هوية المركز", "الاسم والشعار والتواصل", Icons.home, "gold")}
         {admin && link("/app/audit", "سجل التعديلات", "من عدّل ماذا ومتى", Icons.clipboard, "rose")}
         {admin && <button className="card row-card" type="button" onClick={() => void backup()}><span className="ico-badge" aria-hidden="true">{Icons.book}</span><span className="grow"><b>نسخة احتياطية كاملة</b><small>تنزيل كل بيانات المركز (بلا كلمات مرور)</small></span></button>}
+        {admin && <BackupsCard />}
       </div>
       <h2 className="section-title">حسابي</h2>
       <div className="list">

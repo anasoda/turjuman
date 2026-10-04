@@ -285,7 +285,7 @@ await test("التصدير الكامل: للمدير فقط وبلا كلمات
   assert.ok(r.data.guardians?.length >= 2, "أولياء الأمور غير موجودين في التصدير");
   assert.ok(r.data.prayerTimes?.length >= 1, "مواعيد الصلاة غير موجودة في التصدير");
   assert.ok(r.data.stageManagers?.length >= 1, "تعيين مديري المراحل غير موجود في التصدير");
-  for (const section of ["courseStudents", "announcements", "notifications", "studentNotes", "auditLog"]) {
+  for (const section of ["courseStudents", "announcements", "notifications", "studentNotes", "auditLog", "studentMonthlyPlans", "studentTransfers", "examSessions", "testQuestions", "ajkamSessions", "ajkamAttendance", "ajkamNotes", "ajkamEvents", "sessionCancellations"]) {
     assert.ok(Array.isArray(r.data[section]), `${section} غير موجود في التصدير`);
   }
   assert.ok("logo" in r.data.center && "guardian_id" in r.data.students[0] && "phone_cc" in r.data.students[0], "حقول المركز والطلاب الأساسية ناقصة");
@@ -308,6 +308,53 @@ await test("ملخص الطالب للكادر (للتقرير المطبوع): 
   assert.ok(r.student.name.includes("عمر") && Array.isArray(r.daily) && "month" in r);
   assert.equal((await call(`/api/reports/student/${s3.id}`, { cookie: teacher })).status, 404);
   assert.equal((await call(`/api/reports/student/${s1.id}`, { cookie: student })).status, 403);
+});
+
+await test("النسخ الاحتياطي الدوري (R2): للمدير فقط، النسخة مضغوطة وكاملة وبلا كلمات مرور، والاحتفاظ بآخر 4", async () => {
+  const { gunzipSync } = await import("node:zlib");
+  if ((await call("/api/export/backups", { cookie: admin })).status === 503) { console.log("  (تخطّي: مخزن R2 غير مفعّل في wrangler.jsonc)"); return; }
+  assert.equal((await call("/api/export/backups", { cookie: secretary })).status, 403);
+  assert.equal((await call("/api/export/backups/run", { method: "POST", cookie: teacher })).status, 403);
+  assert.equal((await call("/api/export/backups/..%2Fx.json.gz", { cookie: admin })).status, 404);
+  for (let i = 0; i < 6; i++) {
+    assert.equal((await call("/api/export/backups/run", { method: "POST", cookie: admin })).status, 201);
+    await new Promise((r) => setTimeout(r, 1100)); // اسم النسخة بالثانية
+  }
+  const list = (await call("/api/export/backups", { cookie: admin })).data;
+  assert.equal(list.backups.length, 4, "يُحتفظ بآخر 4 نسخ فقط");
+  assert.ok(list.backups[0].name > list.backups[3].name, "الأحدث أولاً");
+  const res = await fetch(BASE + "/api/export/backups/" + list.backups[0].name, { headers: { cookie: admin } });
+  assert.equal(res.status, 200);
+  const text = gunzipSync(Buffer.from(await res.arrayBuffer())).toString("utf8");
+  assert.ok(!/password_hash|password_salt|"hash"/i.test(text));
+  const data = JSON.parse(text);
+  assert.ok(data.students.length >= 3 && Array.isArray(data.sessionCancellations) && data.centerId === "obai-01");
+  assert.equal((await fetch(BASE + "/api/export/backups/" + list.backups[0].name, { headers: { cookie: secretary } })).status, 403);
+});
+
+await test("حصة ملغاة (§14.6): إعلان بسبب، إشعار للأولياء، حجب التسجيل، وإعادة", async () => {
+  const day = addDays(1);
+  const before = await unread(student);
+  assert.equal((await call("/api/cancellations", { method: "POST", cookie: teacher, body: { circleId: fajr.id, date: addDays(-1), reason: "عطلة" } })).status, 400, "لا إلغاء ليوم مضى");
+  assert.equal((await call("/api/cancellations", { method: "POST", cookie: teacher, body: { circleId: fajr.id, date: day, reason: "ع" } })).status, 400, "السبب إلزامي");
+  assert.equal((await call("/api/cancellations", { method: "POST", cookie: teacher3, body: { circleId: fajr.id, date: day, reason: "اعتذار المعلّم" } })).status, 403, "معلّم حلقة أخرى");
+  const made = await call("/api/cancellations", { method: "POST", cookie: teacher, body: { circleId: fajr.id, date: day, reason: "اعتذار المعلّم عن الحصة" } });
+  assert.equal(made.status, 201, JSON.stringify(made.data));
+  assert.equal((await call("/api/cancellations", { method: "POST", cookie: teacher, body: { circleId: fajr.id, date: day, reason: "مكرر" } })).status, 409);
+  assert.equal(await unread(student), before + 1, "يصل الولي إشعار");
+  const mine = (await call("/api/cancellations/mine", { cookie: student })).data.cancellations;
+  assert.ok(mine.some((x) => x.id === made.data.id && x.reason === "اعتذار المعلّم عن الحصة" && x.students.length));
+  assert.equal((await call("/api/cancellations/mine", { cookie: teacher })).status, 403);
+  const board = (await call(`/api/daily/board?date=${day}&circleId=${fajr.id}`, { cookie: teacher })).data;
+  assert.equal(board.cancellation?.id, made.data.id);
+  const blocked = await call("/api/daily", { method: "POST", cookie: teacher, body: { studentId: s1.id, date: day, attendance: "absent" } });
+  assert.equal(blocked.status, 409, "لا تسجيل في حصة ملغاة");
+  assert.equal((await call(`/api/cancellations/${made.data.id}`, { method: "DELETE", cookie: teacher3 })).status, 403);
+  assert.equal((await call(`/api/cancellations/${made.data.id}`, { method: "DELETE", cookie: teacher })).status, 200);
+  assert.equal((await call(`/api/daily/board?date=${day}&circleId=${fajr.id}`, { cookie: teacher })).data.cancellation, null);
+  assert.ok([200, 201].includes((await call("/api/daily", { method: "POST", cookie: teacher, body: { studentId: s1.id, date: day, attendance: "absent" } })).status), "بعد الإعادة يُسمح بالتسجيل");
+  const rec = await call("/api/cancellations", { method: "POST", cookie: teacher, body: { circleId: fajr.id, date: day, reason: "سبب جديد" } });
+  assert.equal(rec.status, 409, "لا إلغاء ليوم فيه تسجيل");
 });
 
 await test("لوحة المالك: بمفتاح النظام فقط (إنشاء مركز، إيقافه، إعادة تفعيله)", async () => {

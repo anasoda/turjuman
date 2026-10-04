@@ -47,45 +47,48 @@ export function NotesSheet({ student, onClose }: { student: Student; onClose: ()
   );
 }
 
-/** الصورة الشخصية + موافقة لوحة الشرف + روابط الطباعة. */
-export function StudentTools({ student, canHonor, onChanged }: { student: Student; canHonor: boolean; onChanged: () => void }) {
-  const full = useFetch<{ student: Student }>(`/api/students/${student.id}`);
+/** أزرار تغيير الصورة الشخصية وإزالتها (الصورة نفسها تُعرض في رأس بطاقة الطالب). تُحفظ بدقة أعلى وبلا اقتصاص ليمكن عرضها كاملة مكبّرة. */
+export function PhotoControls({ student, photo, onUpdated }: { student: Student; photo?: string; onUpdated: () => void }) {
   const { run } = useAction();
-  const [notes, setNotes] = useState(false);
-  const { user } = useMe();
-  const photo = full.data?.student.photo;
-
   const pick = async (file?: File) => {
     if (!file) return;
     await run(async () => {
-      const dataUrl = await compressImage(file, { max: 200, quality: 0.6, maxChars: 150_000, cropSquare: true });
+      const dataUrl = await compressImage(file, { max: 640, quality: 0.72, maxChars: 240_000 });
       await api(`/api/students/${student.id}/photo`, { method: "POST", body: { photo: dataUrl } });
-      await full.reload();
-      onChanged();
+      onUpdated();
     }, "تم تحديث الصورة");
   };
-  const removePhoto = async () => { if (await run(() => api(`/api/students/${student.id}/photo`, { method: "POST", body: { photo: "" } }), "تمت إزالة الصورة")) { await full.reload(); onChanged(); } };
-  const consent = async (v: boolean) => { await run(() => api("/api/honor/consent", { method: "POST", body: { studentId: student.id, consent: v } }), v ? "سيظهر في لوحة الشرف" : "لن يظهر في لوحة الشرف"); };
-
+  const remove = async () => { if (await run(() => api(`/api/students/${student.id}/photo`, { method: "POST", body: { photo: "" } }), "تمت إزالة الصورة")) onUpdated(); };
   return (
-    <div className="form-grid">
-      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        <span className="avatar" style={{ width: 64, height: 64, overflow: "hidden" }}>{photo ? <img src={photo} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : student.name.charAt(0)}</span>
-        <div className="actions">
-          <label className="btn ghost small" style={{ cursor: "pointer" }}>{photo ? "تغيير الصورة" : "إضافة صورة"}<input type="file" accept="image/*" hidden onChange={(e) => void pick(e.target.files?.[0])} /></label>
-          {photo && <button className="btn ghost danger small" type="button" onClick={() => void removePhoto()}>إزالة</button>}
-        </div>
-      </div>
+    <div className="actions">
+      <label className="btn ghost small" style={{ cursor: "pointer" }}>{photo ? "تغيير الصورة" : "إضافة صورة"}<input type="file" accept="image/*" hidden onChange={(e) => void pick(e.target.files?.[0])} /></label>
+      {photo && <button className="btn ghost danger small" type="button" onClick={() => void remove()}>إزالة</button>}
+    </div>
+  );
+}
+
+/** تقارير وطباعة + ملاحظات داخلية + موافقة لوحة الشرف. */
+export function StudentTools({ student, canHonor, section }: { student: Student; canHonor: boolean; section: "print" | "manage" }) {
+  const { run } = useAction();
+  const [notes, setNotes] = useState(false);
+  const { user } = useMe();
+  const consent = async (v: boolean) => { await run(async () => { await api("/api/honor/consent", { method: "POST", body: { studentId: student.id, consent: v } }); }, v ? "سيظهر في لوحة الشرف" : "لن يظهر في لوحة الشرف"); };
+  if (section === "print") {
+    return (
       <div className="actions">
-        <button className="btn ghost small" type="button" onClick={() => setNotes(true)}>ملاحظات داخلية</button>
         <Link className="btn ghost small" to={`/app/print/${student.id}?type=report`}>تقرير الطالب كصورة</Link>
         <Link className="btn ghost small" to={`/app/print/${student.id}?type=certificate`}>شهادة</Link>
         <Link className="btn ghost small" to={`/app/print/${student.id}?type=card`}>بطاقة</Link>
       </div>
+    );
+  }
+  return (
+    <>
+      <button className="btn ghost small" type="button" onClick={() => setNotes(true)}>ملاحظات داخلية</button>
       {canHonor && user.role !== "teacher" && (
-        <label className="radio-row"><span style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" defaultChecked={student.honorConsent} onChange={(e) => void consent(e.target.checked)} style={{ width: 18, height: 18 }} />وافق ولي الأمر على ظهور الاسم في لوحة الشرف</span></label>
+        <label className="sd-toggle"><input type="checkbox" defaultChecked={student.honorConsent} onChange={(e) => void consent(e.target.checked)} /><span>وافق ولي الأمر على ظهور الاسم في لوحة الشرف</span></label>
       )}
       {notes && <NotesSheet student={student} onClose={() => setNotes(false)} />}
-    </div>
+    </>
   );
 }
