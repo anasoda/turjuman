@@ -11,7 +11,7 @@ export interface CenterInfo {
 }
 
 export interface MeResponse {
-  user: { id: string; role: Role; displayName: string; username: string; studentId: string | null };
+  user: { id: string; role: Role; displayName: string; username: string; studentId: string | null; mustChangePassword?: boolean };
   center: CenterInfo;
   settings: CenterSettings;
 }

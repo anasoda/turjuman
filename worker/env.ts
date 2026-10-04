@@ -23,6 +23,8 @@ export interface AuthCtx {
   centerId: string;
   role: Role;
   displayName: string;
+  /** من الجلسة: كلمة مرور ولي الأمر ما زالت الأولية (= اسم المستخدم)؛ undefined = جلسة قديمة لم تُفحص بعد */
+  defaultPassword?: boolean;
 }
 
 export type AppEnv = { Bindings: Env; Variables: { auth: AuthCtx } };

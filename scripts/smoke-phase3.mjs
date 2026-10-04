@@ -131,6 +131,26 @@ await test("جدول الحلقات: المدير يحدّد، والمعلّم 
   assert.ok(saved.length === 2 && saved.every((e) => e.slot === "maghrib" && e.start === "" && e.end === ""));
 });
 
+await test("التسجيل اليومي خارج جدول الحلقة مسموح مع علامة offSchedule، والتعديل دائماً مسموح (البند 4)", async () => {
+  // جدول الفجر الآن الأحد والثلاثاء؛ نختار يوماً من الأسبوع الماضي ليس منهما وآخر منهما
+  const dayOf = (iso) => new Date(iso + "T00:00:00Z").getUTCDay();
+  const back = (n) => { const d = new Date(today + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
+  const off = [1, 2, 3, 4, 5, 6, 7].map(back).find((d) => ![0, 2].includes(dayOf(d)));
+  const on = [1, 2, 3, 4, 5, 6, 7].map(back).find((d) => [0, 2].includes(dayOf(d)));
+  const kid = [s1, s2, s3].find((x) => x.circleId === fajr.id);
+  assert.ok(kid, "لا طالب تجريبي في حلقة الفجر");
+  const a = await call("/api/daily", { method: "POST", cookie: admin, body: { studentId: kid.id, date: off, attendance: "absent" } });
+  assert.ok([200, 201].includes(a.status), JSON.stringify(a.data));
+  assert.equal(a.data.offSchedule, true, "خارج الجدول يُعلَّم");
+  const b = await call("/api/daily", { method: "POST", cookie: admin, body: { studentId: kid.id, date: on, attendance: "absent" } });
+  assert.ok([200, 201].includes(b.status), JSON.stringify(b.data));
+  assert.equal(b.data.offSchedule, false, "داخل الجدول لا يُعلَّم");
+  const edit = await call("/api/daily", { method: "POST", cookie: admin, body: { studentId: kid.id, date: off, attendance: "excused", note: "عذر طبي" } });
+  assert.equal(edit.status, 200, JSON.stringify(edit.data));
+  const board = (await call(`/api/daily/board?circleId=${fajr.id}&date=${off}`, { cookie: admin })).data;
+  assert.equal(board.scheduled, false, "اللوحة تُخبر الواجهة بأن اليوم خارج الجدول");
+});
+
 await test("حضور الكادر: للإدارة فقط مع ملخص شهري", async () => {
   const set = await call("/api/staff-attendance", { method: "POST", cookie: secretary, body: { userId: t1.id, date: today, status: "late", note: "تأخر 10 دقائق" } });
   assert.equal(set.status, 200);
@@ -163,6 +183,25 @@ await test("لوحة الشرف: بموافقة الأهل فقط", async () => 
   if (rep && rep.pages > 0 && rep.planPages > 0) assert.ok(after.top.some((r) => r.name === s1.name), "المتفوّق الموافق يظهر");
   assert.ok(after.top.every((r) => r.name !== s2.name), "طالب بلا موافقة لا يظهر");
   await call("/api/honor/consent", { method: "POST", cookie: admin, body: { studentId: s1.id, consent: false } });
+});
+
+await test("الحفّاظ يُحسبون من موضع الحفظ الفعلي لا من الرقم اليدوي (البند 7)", async () => {
+  const orig = { direction: s1.direction, lastSurah: s1.lastSurah, lastAyah: s1.lastAyah };
+  const stats = async () => (await call(`/api/public/stats?centerId=${G}`)).data.huffaz;
+  const put = (body) => call(`/api/students/${s1.id}`, { method: "PATCH", cookie: admin, body });
+  const base = await stats();
+  assert.equal((await call("/api/honor/consent", { method: "POST", cookie: admin, body: { studentId: s1.id, consent: true } })).status, 200);
+  try {
+    assert.equal((await put({ direction: "descending", lastSurah: 1, lastAyah: 7 })).status, 200);
+    assert.equal(await stats(), base + 1, "من أتمّ الفاتحة (تنازلي) يُعدّ حافظاً في الصفحة العامة");
+    assert.ok((await call("/api/honor", { cookie: admin })).data.huffaz.some((h) => h.name === s1.name), "ويظهر في لوحة الشرف");
+    assert.equal((await put({ direction: "descending", lastSurah: 114, lastAyah: 0 })).status, 200);
+    assert.equal(await stats(), base, "ومن لم يُتمّ شيئاً لا يُعدّ حافظاً");
+    assert.ok(!(await call("/api/honor", { cookie: admin })).data.huffaz.some((h) => h.name === s1.name));
+  } finally {
+    await put(orig);
+    await call("/api/honor/consent", { method: "POST", cookie: admin, body: { studentId: s1.id, consent: false } });
+  }
 });
 
 await test("الإحصاءات: اتجاه المركز وجداول التقارير للإدارة فقط", async () => {

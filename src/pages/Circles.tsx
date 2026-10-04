@@ -42,7 +42,7 @@ export function Circles() {
             </span>
           </button>
           <div className="actions">
-            {!readOnly && <button className="btn ghost small" type="button" onClick={() => setSchedule(c)}>جدول الحلقة</button>}
+            {!teacher && <button className="btn ghost small" type="button" onClick={() => setSchedule(c)}>جدول الحلقة</button>}
             {!readOnly && !teacher && <button className={`btn ghost small ${c.active ? "danger" : ""}`} type="button" onClick={() => void toggle(c)}>{c.active ? "تعطيل" : "تفعيل"}</button>}
           </div>
           </div>
@@ -72,7 +72,8 @@ function CircleForm({ circle, teachers, teacherEditable, onClose, onSaved }: { c
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const body = { name: String(f.get("name")), category, levelKey: String(f.get("levelKey")), active: f.get("active") === "on", primaryTeacherId: primary || null, assistantTeacherId: assistant || null };
+    // المعلّم يعدّل الاسم فقط (البند 5): بقية الحقول تُرسَل بقيمها الحالية
+    const body = { name: String(f.get("name")), category, levelKey: teacherEditable || !circle ? String(f.get("levelKey")) : circle.levelKey, active: teacherEditable || !circle ? f.get("active") === "on" : circle.active, primaryTeacherId: primary || null, assistantTeacherId: assistant || null };
     const ok = await run(() => (circle ? api(`/api/circles/${circle.id}`, { method: "PUT", body }) : api("/api/circles", { method: "POST", body })), circle ? "تم حفظ الحلقة" : "تمت إضافة الحلقة");
     if (ok) onSaved();
   };
@@ -92,12 +93,12 @@ function CircleForm({ circle, teachers, teacherEditable, onClose, onSaved }: { c
         <Field label="اسم الحلقة"><input name="name" required minLength={2} defaultValue={circle?.name} /></Field>
         <div className="form-grid two">
           <Field label="الفئة">
-            <select value={category} onChange={(e) => { setCategory(e.target.value as Gender); setPrimary(""); setAssistant(""); }}>
+            <select value={category} disabled={!teacherEditable} onChange={(e) => { setCategory(e.target.value as Gender); setPrimary(""); setAssistant(""); }}>
               <option value="male">{CATEGORY_LABELS.male}</option><option value="female">{CATEGORY_LABELS.female}</option>
             </select>
           </Field>
           <Field label="المرحلة">
-            <select name="levelKey" defaultValue={circle?.levelKey ?? settings.levels[0]?.key}>
+            <select name="levelKey" defaultValue={circle?.levelKey ?? settings.levels[0]?.key} disabled={!teacherEditable}>
               {settings.levels.map((l) => <option key={l.key} value={l.key}>{l.label}</option>)}
             </select>
           </Field>
@@ -114,7 +115,7 @@ function CircleForm({ circle, teachers, teacherEditable, onClose, onSaved }: { c
             {available.filter((t) => t.id !== primary).map((t) => <option key={t.id} value={t.id}>{t.displayName}{t.role === "stage_manager" ? " (مدير مرحلة)" : ""}</option>)}
           </select>
         </Field>}
-        <label className="radio-row"><span style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" name="active" defaultChecked={circle?.active ?? true} style={{ width: 18, height: 18 }} />الحلقة فعّالة</span></label>
+        <label className="radio-row"><span style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" name="active" defaultChecked={circle?.active ?? true} disabled={!teacherEditable} style={{ width: 18, height: 18 }} />الحلقة فعّالة</span></label>
         <div className="actions">
           <button className="btn" disabled={busy}>{circle ? "حفظ" : "إضافة"}</button>
           {circle && <button className="btn ghost danger" type="button" onClick={() => void remove()}>حذف</button>}

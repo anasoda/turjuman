@@ -41,6 +41,28 @@ await test("المعلّم يرى حلقاته كلها (أكثر من واحد�
   assert.ok(mine.length >= 2, `توقعتُ حلقتين على الأقل، وجدتُ ${mine.length}`);
 });
 
+await test("المعلّم يعدّل اسم حلقته فقط؛ المرحلة والفئة والتفعيل للإدارة (البند 5)", async () => {
+  const c0 = mine[0];
+  const full = (over) => ({ name: c0.name, category: c0.category, levelKey: c0.levelKey, active: c0.active, primaryTeacherId: c0.primaryTeacherId, assistantTeacherId: c0.assistantTeacherId, ...over });
+  const put = (cookie, over) => call(`/api/circles/${c0.id}`, { method: "PUT", cookie, body: full(over) });
+  const levels = (await call("/api/auth/me", { cookie: admin })).data.settings.levels.map((l) => l.key);
+  const otherLevel = levels.find((k) => k !== c0.levelKey);
+  assert.ok(otherLevel, "يلزم مرحلتان في البذرة");
+  const renamed = `${c0.name} معدّلة`;
+  assert.equal((await put(teacher, { name: renamed })).status, 200, "المعلّم يغيّر الاسم");
+  assert.equal((await put(teacher, { name: renamed, levelKey: otherLevel })).status, 403, "المعلّم لا يغيّر المرحلة");
+  assert.equal((await put(teacher, { name: renamed, active: !c0.active })).status, 403, "المعلّم لا يعطّل الحلقة");
+  assert.equal((await put(teacher, { name: renamed, category: c0.category === "male" ? "female" : "male" })).status, 403, "المعلّم لا يغيّر الفئة");
+  assert.equal((await put(other, { name: "اسم من معلّم آخر" })).status, 404, "حلقة غير حلقته");
+  const after = (await call("/api/circles", { cookie: admin })).data.circles.find((x) => x.id === c0.id);
+  assert.equal(after.name, renamed);
+  assert.equal(after.levelKey, c0.levelKey);
+  assert.equal(after.active, c0.active);
+  // الإدارة تبقى كما كانت: تغيّر المرحلة ثم تعيدها
+  assert.equal((await put(admin, { name: renamed, levelKey: otherLevel })).status, 200, "الإدارة تغيّر المرحلة");
+  assert.equal((await put(admin, { name: c0.name })).status, 200, "إعادة الوضع الأصلي");
+});
+
 await test("إسناد حلقة ثالثة للمعلّم نفسه يُقبل (رُفع قيد الحلقة الواحدة)", async () => {
   const r = await call("/api/circles", {
     method: "POST", cookie: admin,

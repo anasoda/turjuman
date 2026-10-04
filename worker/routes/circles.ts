@@ -105,7 +105,7 @@ circleRoutes.post("/", requireAuth("admin", "secretary"), async (c) => {
 circleRoutes.put("/:id", requireAuth("admin", "secretary", "teacher"), async (c) => {
   const auth = c.get("auth");
   const id = c.req.param("id");
-  const existing = await c.env.DB.prepare("SELECT id, category FROM circles WHERE id = ? AND center_id = ?").bind(id, auth.centerId).first<{ id: string; category: string }>();
+  const existing = await c.env.DB.prepare("SELECT id, category, level_key AS levelKey, active FROM circles WHERE id = ? AND center_id = ?").bind(id, auth.centerId).first<{ id: string; category: string; levelKey: string; active: number }>();
   if (!existing) fail(404, "الحلقة غير موجودة");
   if (auth.role === "teacher") {
     const own = await c.env.DB.prepare("SELECT 1 FROM circle_teachers WHERE circle_id = ? AND teacher_id = ?").bind(id, auth.userId).first();
@@ -117,6 +117,8 @@ circleRoutes.put("/:id", requireAuth("admin", "secretary", "teacher"), async (c)
     const primary = assigned.results.find((x) => x.kind === "primary")?.teacherId ?? null;
     const assistant = assigned.results.find((x) => x.kind === "assistant")?.teacherId ?? null;
     if (b.primaryTeacherId !== primary || b.assistantTeacherId !== assistant) fail(403, "لا يمكنك تغيير إسناد معلّمي الحلقة");
+    // قرار المالك (البند 5): المعلّم يعدّل اسم حلقته فقط؛ الفئة والمرحلة والتفعيل للإدارة (تغيير المرحلة يُخرج الحلقة من نطاق مدير مرحلتها)
+    if (b.category !== existing.category || b.levelKey !== existing.levelKey || b.active !== (existing.active === 1)) fail(403, "المعلّم يعدّل اسم الحلقة فقط؛ الفئة والمرحلة والتفعيل للإدارة");
   }
   await assertLevel(c, b.levelKey);
   const dup = await c.env.DB.prepare("SELECT id FROM circles WHERE center_id = ? AND name = ? AND id <> ?").bind(auth.centerId, b.name, id).first();

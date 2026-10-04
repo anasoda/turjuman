@@ -15,13 +15,16 @@ interface TokenPayload {
   cid: string;
   role: Role;
   ver: number;
+  /** كلمة المرور ما زالت الأولية (تُحسب عند الدخول فقط، حيث تتوفر كلمة المرور الصريحة) */
+  dpw?: boolean;
   exp: number;
   [key: string]: unknown;
 }
 
-export async function issueSession(c: Context<AppEnv>, user: { id: string; center_id: string; role: Role; session_version: number }) {
+export async function issueSession(c: Context<AppEnv>, user: { id: string; center_id: string; role: Role; session_version: number }, defaultPassword?: boolean) {
   const now = Math.floor(Date.now() / 1000);
   const payload: TokenPayload = { sub: user.id, cid: user.center_id, role: user.role, ver: user.session_version, iat: now, exp: now + TOKEN_TTL_SECONDS };
+  if (defaultPassword !== undefined) payload.dpw = defaultPassword;
   const token = await sign(payload, c.env.JWT_SECRET, "HS256");
   setCookie(c, COOKIE, token, {
     httpOnly: true,
@@ -70,6 +73,7 @@ export async function loadAuth(c: Context<AppEnv>): Promise<AuthCtx | null> {
     centerId: row.center_id,
     role,
     displayName: row.display_name,
+    defaultPassword: typeof payload.dpw === "boolean" ? payload.dpw : undefined,
     guardianId: row.guardian_id ?? undefined,
     stages: stages.length ? stages : undefined,
     circleIds: circleIds.length ? circleIds : undefined

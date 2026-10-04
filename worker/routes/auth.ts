@@ -49,7 +49,8 @@ authRoutes.post("/login", async (c) => {
     fail(401, "كلمة المرور غير صحيحة");
   }
   await limiter.clear();
-  const expiresAt = await issueSession(c, user);
+  // حساب ولي الأمر يُخزَّن بدور student؛ كلمته الأولية = اسم المستخدم (§15.8) فنعرف عند الدخول إن لم يغيّرها
+  const expiresAt = await issueSession(c, user, user.role === "student" ? body.password === body.username : undefined);
   return c.json({ ok: true, expiresAt, role: user.role, displayName: user.display_name });
 });
 
@@ -71,8 +72,19 @@ authRoutes.get("/me", async (c) => {
     const s = await c.env.DB.prepare("SELECT id FROM students WHERE user_id = ? AND center_id = ?").bind(auth.userId, auth.centerId).first<{ id: string }>();
     studentId = s?.id ?? null;
   }
+  let mustChangePassword = auth.defaultPassword === true;
+  if (auth.role === "guardian" && auth.defaultPassword === undefined) {
+    // جلسة سابقة للميزة: فحص واحد لكلمة المرور ثم تُثبَّت النتيجة في الجلسة فلا يتكرر
+    const u = await c.env.DB.prepare("SELECT id, center_id, role, username, password_hash, password_salt, password_iterations, session_version FROM users WHERE id = ?")
+      .bind(auth.userId)
+      .first<{ id: string; center_id: string; role: Role; username: string; password_hash: string; password_salt: string; password_iterations: number; session_version: number }>();
+    if (u) {
+      mustChangePassword = await verifyPassword(u.username, { hash: u.password_hash, salt: u.password_salt, iterations: u.password_iterations });
+      await issueSession(c, u, mustChangePassword);
+    }
+  }
   return c.json({
-    user: { id: auth.userId, role: auth.role, displayName: auth.displayName, username: account?.username ?? "", studentId },
+    user: { id: auth.userId, role: auth.role, displayName: auth.displayName, username: account?.username ?? "", studentId, mustChangePassword },
     center,
     settings: await loadSettings(c.env.DB, auth.centerId)
   });
@@ -87,18 +99,19 @@ const changePasswordSchema = z.object({
 authRoutes.post("/change-password", requireAuth(), async (c) => {
   const auth = c.get("auth");
   const body = await parseBody(c, changePasswordSchema);
-  const user = await c.env.DB.prepare("SELECT id, center_id, role, password_hash, password_salt, password_iterations, session_version FROM users WHERE id = ?")
+  const user = await c.env.DB.prepare("SELECT id, center_id, role, username, password_hash, password_salt, password_iterations, session_version FROM users WHERE id = ?")
     .bind(auth.userId)
-    .first<{ id: string; center_id: string; role: Role; password_hash: string; password_salt: string; password_iterations: number; session_version: number }>();
+    .first<{ id: string; center_id: string; role: Role; username: string; password_hash: string; password_salt: string; password_iterations: number; session_version: number }>();
   if (!user) fail(404, "الحساب غير موجود");
   const ok = await verifyPassword(body.oldPassword, { hash: user.password_hash, salt: user.password_salt, iterations: user.password_iterations });
   if (!ok) fail(401, "كلمة المرور الحالية غير صحيحة");
+  if (body.newPassword === user.username) fail(400, "لا تجعل كلمة المرور الجديدة مطابقة لاسم المستخدم");
   const rec = await createPasswordRecord(body.newPassword);
   const nextVersion = user.session_version + 1;
   await c.env.DB.prepare("UPDATE users SET password_hash = ?, password_salt = ?, password_iterations = ?, session_version = ?, updated_at = ? WHERE id = ?")
     .bind(rec.hash, rec.salt, rec.iterations, nextVersion, Date.now(), user.id)
     .run();
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "change_password", entity: "user", entityId: user.id });
-  const expiresAt = await issueSession(c, { ...user, session_version: nextVersion });
+  const expiresAt = await issueSession(c, { ...user, session_version: nextVersion }, user.role === "student" ? false : undefined);
   return c.json({ ok: true, expiresAt });
 });

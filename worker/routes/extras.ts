@@ -3,13 +3,13 @@ import type { Context } from "hono";
 import { z } from "zod";
 import { PRAYER_SLOTS } from "../../shared/constants";
 import type { AppEnv } from "../env";
-import { accessibleStudent, circleScope, stageTeacherScope, studentScope, teacherCircleIds } from "../lib/access";
+import { accessibleStudent, assertStageCircle, circleScope, stageTeacherScope, studentScope, teacherCircleIds } from "../lib/access";
 import { requireAuth } from "../lib/auth";
 import { newId, timingSafeEqual } from "../lib/crypto";
 import { DATE_RE, MONTH_RE, monthOf, todayHebron } from "../lib/dates";
 import { audit, fail, parseBody } from "../lib/util";
 import { buildReportRows } from "./reports";
-import { partsOf, withParts } from "../lib/parts";
+import { isHafiz, withParts } from "../lib/parts";
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -122,11 +122,13 @@ scheduleRoutes.get("/", requireAuth(), async (c) => {
   return c.json({ entries: results });
 });
 
-scheduleRoutes.put("/:circleId", requireAuth("admin", "secretary"), async (c) => {
+// تعديل الجدول: المدير والسكرتير، ومدير المرحلة لحلقات مراحله فقط (قرار المالك)؛ المعلّم يرى جدول حلقته ولا يعدّله
+scheduleRoutes.put("/:circleId", requireAuth("admin", "secretary", "stage_manager"), async (c) => {
   const auth = c.get("auth");
   const circleId = c.req.param("circleId");
   const circle = await c.env.DB.prepare("SELECT id FROM circles WHERE id = ? AND center_id = ?").bind(circleId, auth.centerId).first();
   if (!circle) fail(404, "الحلقة غير موجودة");
+  await assertStageCircle(c, circleId);
   const b = await parseBody(c, scheduleSchema);
   await c.env.DB.batch([
     c.env.DB.prepare("DELETE FROM circle_schedule WHERE circle_id = ?").bind(circleId),
@@ -243,16 +245,16 @@ honorRoutes.get("/", requireAuth(), async (c) => {
   const month = new URL(c.req.url).searchParams.get("month") || monthOf(todayHebron());
   if (!MONTH_RE.test(month)) fail(400, "الشهر غير صالح");
   const { results: students } = await c.env.DB.prepare(
-    `SELECT s.id, s.name, s.direction, s.last_surah AS lastSurah, s.last_ayah AS lastAyah, s.monthly_plan_pages AS monthlyPlanPages, s.memorized_parts AS memorizedParts, ci.name AS circleName
+    `SELECT s.id, s.name, s.direction, s.last_surah AS lastSurah, s.last_ayah AS lastAyah, s.monthly_plan_pages AS monthlyPlanPages, ci.name AS circleName
        FROM students s LEFT JOIN circles ci ON ci.id = s.circle_id WHERE s.center_id = ? AND s.archived_at IS NULL AND s.honor_consent = 1 LIMIT 200`
-  ).bind(auth.centerId).all<{ id: string; name: string; direction: "descending" | "ascending"; lastSurah: number; lastAyah: number; monthlyPlanPages: number; memorizedParts: number; circleName: string | null }>();
+  ).bind(auth.centerId).all<{ id: string; name: string; direction: "descending" | "ascending"; lastSurah: number; lastAyah: number; monthlyPlanPages: number; circleName: string | null }>();
   const rows = await buildReportRows(c.env.DB, auth.centerId, month, students);
   const top = rows
     .filter((r) => r.planPages > 0 && r.pages > 0)
     .sort((a, b) => b.percent - a.percent || b.pages - a.pages)
     .slice(0, 10)
     .map((r) => ({ name: r.name, circleName: students.find((s) => s.id === r.studentId)?.circleName ?? null, pages: r.pages, planPages: r.planPages, percent: r.percent }));
-  const huffaz = students.filter((s) => partsOf(s) >= 30).map((s) => ({ name: s.name, circleName: s.circleName }));
+  const huffaz = students.filter(isHafiz).map((s) => ({ name: s.name, circleName: s.circleName }));
   return c.json({ month, top, huffaz });
 });
 

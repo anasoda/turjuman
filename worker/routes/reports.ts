@@ -9,7 +9,7 @@ import { requireAuth } from "../lib/auth";
 import { newId } from "../lib/crypto";
 import { MONTH_RE, monthOf, todayHebron } from "../lib/dates";
 import { notifyMany } from "../lib/notify";
-import { sendPush } from "../lib/push";
+import { pushInBackground } from "../lib/push";
 import { circleOnSql, lastDayOfMonth } from "../lib/transfers";
 import { audit, fail, loadSettings, parseBody } from "../lib/util";
 
@@ -234,7 +234,7 @@ reportRoutes.post("/save", requireAuth("admin", "secretary", "teacher", "stage_m
       guardians.results.forEach((r) => recipients.add(r.id));
     }
     await notifyMany(c.env.DB, [...recipients], { centerId: auth.centerId, kind: "report", title: "صدر الكشف الشهري", body: `كشف شهر ${b.month} متاح الآن.`, link: "/app" });
-    await sendPush(c.env.DB, c.env, auth.centerId, [...recipients], { title: "صدر الكشف الشهري", body: `كشف شهر ${b.month} متاح الآن.`, link: "/app" });
+    await pushInBackground(c, auth.centerId, [...recipients], { title: "صدر الكشف الشهري", body: `كشف شهر ${b.month} متاح الآن.`, link: "/app" });
   } catch (e) { console.error("report notify failed", e); }
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "save", entity: "report", details: `${b.month} — ${stmts.length} طالب` });
   return c.json({ ok: true, saved: stmts.length });

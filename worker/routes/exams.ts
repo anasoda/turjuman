@@ -7,7 +7,7 @@ import { accessibleCourse } from "../lib/courses";
 import { newId } from "../lib/crypto";
 import { DATE_RE, notTooFuture } from "../lib/dates";
 import { notifyMany, studentRecipients } from "../lib/notify";
-import { sendPush } from "../lib/push";
+import { pushInBackground } from "../lib/push";
 import { audit, fail, loadSettings, parseBody } from "../lib/util";
 import { ayahCount, juzForPosition, orderKey, partsInRange } from "../../shared/quran";
 import { examRangeDetails, examQuestionScore, examTotalScore, validExamSlots } from "../../shared/exams";
@@ -121,7 +121,7 @@ testRoutes.post("/trial", requireAuth("admin", "secretary", "teacher", "stage_ma
   const uids = await studentRecipients(c.env.DB, student.id);
   const link = `/app?studentId=${student.id}&tab=tests&testId=${id}`;
   await notifyMany(c.env.DB, uids, { centerId: auth.centerId, kind: "test_result", title: `نتيجة اختبار تجريبي: ${student.name}`, body: `العلامة: ${b.score} — ${b.score >= settings.minPassScore ? "ناجح" : "دون النجاح"}`, link });
-  await sendPush(c.env.DB, c.env, auth.centerId, uids, { title: `نتيجة اختبار تجريبي: ${student.name}`, body: `العلامة: ${b.score}`, link });
+  await pushInBackground(c, auth.centerId, uids, { title: `نتيجة اختبار تجريبي: ${student.name}`, body: `العلامة: ${b.score}`, link });
   return c.json({ ok: true, id, passed: b.score >= settings.minPassScore }, 201);
 });
 
@@ -179,7 +179,7 @@ testRoutes.post("/:id/approve", requireAuth("admin", "exam_committee"), async (c
   const studentName = (await c.env.DB.prepare("SELECT name FROM students WHERE id = ? AND center_id = ?").bind(t.studentId, auth.centerId).first<{ name: string }>())?.name ?? "الطالب";
   const link = `/app?studentId=${t.studentId}&tab=tests&testId=${t.id}`;
   await notifyMany(c.env.DB, uids, { centerId: auth.centerId, kind: "test_approved", title: `اعتماد اختبار رسمي: ${studentName}`, body: b.testDate ? `موعد الاختبار: ${b.testDate}` : "اعتمدت لجنة الاختبار الاختبار، وسيُحدَّد الموعد قريباً.", link });
-  await sendPush(c.env.DB, c.env, auth.centerId, uids, { title: `اعتماد اختبار رسمي: ${studentName}`, body: b.testDate ? `موعد الاختبار: ${b.testDate}` : "اعتمد الاختبار، وسيُحدّد موعده قريباً.", link });
+  await pushInBackground(c, auth.centerId, uids, { title: `اعتماد اختبار رسمي: ${studentName}`, body: b.testDate ? `موعد الاختبار: ${b.testDate}` : "اعتمد الاختبار، وسيُحدّد موعده قريباً.", link });
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "approve", entity: "test", entityId: t.id });
   return c.json({ ok: true });
 });
@@ -333,7 +333,7 @@ testRoutes.put("/:id/session", requireAuth("admin", "exam_committee"), async (c)
     const uids = await studentRecipients(c.env.DB, details.test.studentId);
     const link = `/app?studentId=${details.test.studentId}&tab=tests&testId=${details.test.id}`;
     await notifyMany(c.env.DB, uids, { centerId: auth.centerId, kind: "test_result", title: `نتيجة اختبار ${details.test.studentName}`, body: `العلامة: ${totalScore} — ${passed ? "ناجح" : "دون النجاح"}`, link });
-    await sendPush(c.env.DB, c.env, auth.centerId, uids, { title: `نتيجة اختبار ${details.test.studentName}`, body: `العلامة: ${totalScore} — ${passed ? "ناجح" : "دون النجاح"}`, link });
+    await pushInBackground(c, auth.centerId, uids, { title: `نتيجة اختبار ${details.test.studentName}`, body: `العلامة: ${totalScore} — ${passed ? "ناجح" : "دون النجاح"}`, link });
     await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "result", entity: "test", entityId: details.test.id, details: `جلسة: ${totalScore}` });
     return c.json({ ok: true, totalScore, passed: !!passed });
   }

@@ -1,4 +1,5 @@
-import type { Env } from "../env";
+import type { Context } from "hono";
+import type { AppEnv, Env } from "../env";
 
 export interface PushMessage { title: string; body?: string; link?: string }
 export interface PushResult { subscriptions: number; accepted: number; failed: number }
@@ -64,4 +65,15 @@ export async function sendPush(db: D1Database, env: Env, centerId: string, userI
   }
   } catch (error) { result.failed++; console.error("push delivery failed", error); }
   return result;
+}
+
+/**
+ * يُرسل التنبيه بعد إرجاع الرد (waitUntil) كي لا يبطّئ الطلب مع كثرة المشتركين؛ sendPush لا يرمي أخطاء أصلاً.
+ * بلا executionCtx (اختبارات الوحدة) يُنتظر مباشرة. الإشعار داخل الموقع يبقى متزامناً في المسارات نفسها.
+ */
+export async function pushInBackground(c: Context<AppEnv>, centerId: string, userIds: string[], message: PushMessage): Promise<void> {
+  const job = sendPush(c.env.DB, c.env, centerId, userIds, message).then(() => undefined);
+  let ctx: Context<AppEnv>["executionCtx"] | undefined;
+  try { ctx = c.executionCtx; } catch { ctx = undefined; }
+  if (ctx) ctx.waitUntil(job); else await job;
 }

@@ -523,3 +523,11 @@ table.grid th, table.grid td { padding: 4px 6px; border-bottom: 1px solid var(--
 table.grid tr.bad td { color: var(--rose, #c0392b); }
 
 @media (min-width: 900px) { .fab-row { bottom: 28px; } }
+
+/* ---------- تنبيه تغيير كلمة المرور الأولية ---------- */
+.pw-banner { position: relative; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px 14px 0; padding: 10px 12px; border-radius: 14px; background: var(--amber-soft); color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); font-size: .9rem; line-height: 1.6; }
+.pw-banner .btn { min-height: 40px; padding-block: 6px; }
+.pw-banner-close { position: absolute; top: 6px; inset-inline-end: 6px; background: transparent; border: none; color: inherit; font-size: 1.5rem; line-height: 1; padding: 4px 8px; cursor: pointer; }
+.pw-banner .grow { flex: 1; min-width: 200px; }
+.pw-banner { padding-inline-end: 40px; }
+.notice-box { background: var(--amber-soft); color: var(--amber); padding: 10px 14px; border-radius: 14px; font-size: .92rem; line-height: 1.6; border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); }

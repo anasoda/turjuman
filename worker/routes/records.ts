@@ -8,7 +8,7 @@ import { requireAuth } from "../lib/auth";
 import { newId } from "../lib/crypto";
 import { DATE_RE, monthOf, nextWeekdayDate, notTooFuture, todayHebron, weekdayNameAr } from "../lib/dates";
 import { notifyMany, studentRecipients } from "../lib/notify";
-import { sendPush } from "../lib/push";
+import { pushInBackground } from "../lib/push";
 import { circleOnSql } from "../lib/transfers";
 import { audit, fail, loadSettings, parseBody } from "../lib/util";
 
@@ -137,9 +137,9 @@ dailyRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_manage
   const student = await studentForDate(c, b.studentId, b.date);
   if (student.archivedAt) fail(400, "الطالب مؤرشف");
   const circleId = student.circleId;
-  if (!circleId || !(await circleHasSession(c.env.DB, circleId, b.date))) {
-    fail(400, "لا يوجد موعد لهذه الحلقة في هذا اليوم");
-  }
+  if (!circleId) fail(400, "الطالب غير مسجَّل في حلقة");
+  // قرار المالك (البند 4): التسجيل مسموح دائماً حتى خارج جدول الحلقة (حصة تعويضية/إضافية)؛ الجدول تنبيه فقط
+  const offSchedule = !(await circleHasSession(c.env.DB, circleId, b.date));
   const settings = await loadSettings(c.env.DB, auth.centerId);
   if (b.grade && !settings.recitationGrades.includes(b.grade)) fail(400, "التقييم غير موجود في مقياس المركز");
   if (b.review?.grade && !settings.recitationGrades.includes(b.review.grade)) fail(400, "تقييم المراجعة غير موجود في مقياس المركز");
@@ -220,7 +220,7 @@ dailyRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_manage
   if (b.attendance === "absent") {
     const uids = await studentRecipients(c.env.DB, student.id);
     await notifyMany(c.env.DB, uids, { centerId: auth.centerId, kind: "absence", title: "تسجيل غياب", body: `سُجّل غياب ${student.name} بتاريخ ${b.date}. إن كان لعذر فأبلغ المحفّظ من البوابة.` });
-    await sendPush(c.env.DB, c.env, auth.centerId, uids, { title: "تسجيل غياب", body: `سُجّل غياب ${student.name} بتاريخ ${b.date}.`, link: "/app" });
+    await pushInBackground(c, auth.centerId, uids, { title: "تسجيل غياب", body: `سُجّل غياب ${student.name} بتاريخ ${b.date}.`, link: "/app" });
   }
   // إشعار المطلوب في اللقاء القادم: فقط عند التعيين الجديد أو تغييره عن سابقه (لا تكرار عند تعديل غير متعلق به)
   const posEq = (a: Position | null, b: Position | null) => (a?.surah ?? null) === (b?.surah ?? null) && (a?.ayah ?? null) === (b?.ayah ?? null);
@@ -242,10 +242,10 @@ dailyRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_manage
     const body = `الطالب: ${student.name}\nالمطلوب في اللقاء القادم (${when}):\n${parts.join("\n")}${b.next!.note ? `\n${b.next!.note}` : ""}`;
     const uids = await studentRecipients(c.env.DB, student.id);
     await notifyMany(c.env.DB, uids, { centerId: auth.centerId, kind: "assignment", title: "تسميع اليوم", body, sourceId: id });
-    await sendPush(c.env.DB, c.env, auth.centerId, uids, { title: "المطلوب في اللقاء القادم", body, link: "/app" });
+    await pushInBackground(c, auth.centerId, uids, { title: "المطلوب في اللقاء القادم", body, link: "/app" });
   }
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: existing ? "update" : "create", entity: "daily", entityId: id, details: `${student.name} ${b.date}` });
-  return c.json({ ok: true, id, verses, pages, reviewVerses: rVerses, reviewPages: rPages }, existing ? 200 : 201);
+  return c.json({ ok: true, id, verses, pages, reviewVerses: rVerses, reviewPages: rPages, offSchedule }, existing ? 200 : 201);
 });
 
 dailyRoutes.delete("/:id", requireAuth("admin", "secretary", "teacher", "stage_manager"), async (c) => {

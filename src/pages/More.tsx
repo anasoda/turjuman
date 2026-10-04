@@ -15,7 +15,7 @@ interface InstallEvent extends Event { prompt: () => Promise<void>; userChoice: 
 export function More() {
   const { confirm } = useUi();
   const { user } = useMe();
-  const { logout } = useSession();
+  const { logout, reload } = useSession();
   const [pw, setPw] = useState(false);
   const [theme, setThemeState] = useState<ThemeMode>(getTheme());
   const [installEvt, setInstallEvt] = useState<InstallEvent | null>(null);
@@ -112,19 +112,19 @@ export function More() {
         <button className="card row-card" type="button" onClick={() => setPw(true)}><span className="ico-badge teal" aria-hidden="true">{Icons.staff}</span><span className="grow"><b>تغيير كلمة المرور</b><small>حسابي: {user.username}</small></span></button>
         <button className="card row-card" type="button" onClick={async () => { if (await confirm({ title: "تسجيل الخروج", message: "هل أنت متأكد من الخروج؟", confirmLabel: "خروج", danger: true })) { await disablePush().catch(() => undefined); void logout(); } }}><span className="ico-badge rose" aria-hidden="true">{Icons.login}</span><span className="grow"><b>تسجيل الخروج</b></span></button>
       </div>
-      {pw && <PasswordSheet onClose={() => setPw(false)} />}
+      {pw && <PasswordSheet onClose={() => setPw(false)} onChanged={() => void reload()} />}
     </main>
   );
 }
 
-function PasswordSheet({ onClose }: { onClose: () => void }) {
+export function PasswordSheet({ onClose, onChanged }: { onClose: () => void; onChanged?: () => void }) {
   const { busy, run } = useAction();
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     if (f.get("newPassword") !== f.get("confirm")) return void (await run(async () => { throw new Error("تأكيد كلمة المرور غير مطابق"); }));
     const ok = await run(() => api("/api/auth/change-password", { method: "POST", body: { oldPassword: f.get("oldPassword"), newPassword: f.get("newPassword") } }), "تم تغيير كلمة المرور");
-    if (ok) onClose();
+    if (ok) { onChanged?.(); onClose(); }
   };
   return (
     <Sheet title="تغيير كلمة المرور" onClose={onClose}>

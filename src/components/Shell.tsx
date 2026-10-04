@@ -9,6 +9,7 @@ import { disablePush } from "../lib/push";
 import { getTheme, setTheme } from "../lib/theme";
 import { NOTIFICATIONS_EVENT } from "../pages/Notifications";
 import type { CenterInfo } from "../lib/types";
+import { PasswordSheet } from "../pages/More";
 
 export function Brand({ center }: { center: CenterInfo }) {
   return (
@@ -80,6 +81,27 @@ function Bell() {
   );
 }
 
+const PW_BANNER_KEY = "tq_pw_banner_dismissed";
+
+/** تنبيه (بلا إجبار — §15.8): كلمة مرور ولي الأمر ما زالت رقم هويته. يُغلَق للجلسة الحالية ويختفي نهائياً بعد التغيير. */
+function PasswordBanner() {
+  const { reload } = useSession();
+  const [hidden, setHidden] = useState(() => { try { return sessionStorage.getItem(PW_BANNER_KEY) === "1"; } catch { return false; } });
+  const [open, setOpen] = useState(false);
+  if (hidden) return null;
+  const dismiss = () => { try { sessionStorage.setItem(PW_BANNER_KEY, "1"); } catch { /* التخزين غير متاح */ } setHidden(true); };
+  return (
+    <>
+      <div className="pw-banner" role="alert">
+        <span className="grow">كلمة مرورك الحالية هي رقم هويتك. لحماية حسابك، اختر كلمة مرور جديدة.</span>
+        <button type="button" className="btn gold" onClick={() => setOpen(true)}>غيّرها الآن</button>
+        <button type="button" className="pw-banner-close" onClick={dismiss} aria-label="إغلاق التنبيه">×</button>
+      </div>
+      {open && <PasswordSheet onClose={() => setOpen(false)} onChanged={() => void reload()} />}
+    </>
+  );
+}
+
 /** الهيكل: شريط علوي بهوية المركز + تنقل سفلي (جوال) أو جانبي (شاشة عريضة). */
 export function Shell() {
   const { confirm } = useUi();
@@ -108,6 +130,7 @@ export function Shell() {
           </button>
         </div>
       </header>
+      {user.role === "guardian" && user.mustChangePassword && <PasswordBanner />}
       <Outlet />
       <nav className="bottom-nav" aria-label="التنقل الرئيسي">
         {navFor(user.role).map((n) => (

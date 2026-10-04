@@ -6,7 +6,7 @@ import { requireAuth } from "../lib/auth";
 import { newId } from "../lib/crypto";
 import { DATE_RE, todayHebron } from "../lib/dates";
 import { notifyStatement } from "../lib/notify";
-import { sendPush } from "../lib/push";
+import { pushInBackground, sendPush } from "../lib/push";
 import { audit, fail, parseBody } from "../lib/util";
 
 /* ============================ الإشعارات (لكل مستخدم) ============================ */
@@ -148,7 +148,7 @@ announcementRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage
   for (let i = 0; i < users.length; i += 50) {
     await c.env.DB.batch(users.slice(i, i + 50).map((u) => notifyStatement(c.env.DB, { centerId: auth.centerId, userId: u.id, kind: "announcement", title: b.title, body: b.body, sourceId: id })));
   }
-  await sendPush(c.env.DB, c.env, auth.centerId, users.map((u) => u.id), { title: b.title, body: b.body, link: "/app/notifications" });
+  await pushInBackground(c, auth.centerId, users.map((u) => u.id), { title: b.title, body: b.body, link: "/app/notifications" });
   await audit(c.env.DB, { centerId: auth.centerId, userId: auth.userId, action: "create", entity: "announcement", entityId: id, details: `${b.title} → ${users.length}` });
   return c.json({ ok: true, id, recipients: users.length }, 201);
 });
@@ -220,7 +220,7 @@ absenceRoutes.post("/", requireAuth("student", "guardian"), async (c) => {
     const { results: teachers } = await c.env.DB.prepare("SELECT teacher_id AS id FROM circle_teachers WHERE circle_id = ?").bind(student.circleId).all<{ id: string }>();
     if (teachers.length) {
       await c.env.DB.batch(teachers.map((t) => notifyStatement(c.env.DB, { centerId: auth.centerId, userId: t.id, kind: "absence_notice", title: `إبلاغ غياب: ${student.name}`, body: `${b.date} — ${b.reason}`, link: "/app/daily" })));
-      await sendPush(c.env.DB, c.env, auth.centerId, teachers.map((t) => t.id), {
+      await pushInBackground(c, auth.centerId, teachers.map((t) => t.id), {
         title: `إبلاغ غياب: ${student.name}`,
         body: `${b.date} — ${b.reason}`,
         link: "/app/daily"

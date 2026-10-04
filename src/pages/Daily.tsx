@@ -54,11 +54,11 @@ export function Daily() {
       </div>
       {board.error && <div className="error-box">{board.error}</div>}
       {board.data?.circleId && board.data.scheduled === false && (
-        <div className="notice-box" style={{ marginBottom: 12 }}>لا يوجد تسجيل اليوم؛ هذا اليوم غير مضاف إلى جدول الحلقة.</div>
+        <div className="notice-box" style={{ marginBottom: 12 }}>تنبيه: هذا اليوم ليس من جدول الحلقة. يمكنك التسجيل إن كانت حصة تعويضية أو إضافية.</div>
       )}
       <div className="list">
         {rows.map(({ student, record, absenceNotice }) => (
-          <button key={student.id} type="button" className="card row-card" disabled={board.data?.scheduled === false} onClick={() => setEditing({ student, record })}>
+          <button key={student.id} type="button" className="card row-card" onClick={() => setEditing({ student, record })}>
             <span className="avatar">{initials(student.name)}</span>
             <span className="grow">
               <b>{student.name}</b>

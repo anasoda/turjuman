@@ -186,6 +186,33 @@ await test("إنشاء ولي مع حساب دفعة واحدة برقم اله�
   assert.equal(dup.status, 409, "الهوية فريدة");
 });
 
+await test("تنبيه كلمة المرور الأولية: يظهر عند الدخول برقم الهوية ويختفي بعد التغيير ولا تُعاد كلمة المرور", async () => {
+  const id = "4" + stamp + "2";
+  const made = await call("/api/guardians", { method: "POST", cookie: admin, body: { ...guardianData({ name: "ولي كلمة أولية", nationalId: id, waNational: ph(5), callPhone: ph(5) }), withAccount: true, studentIds: [] } });
+  assert.equal(made.status, 201, JSON.stringify(made.data));
+  const first = await login(G, id, id);
+  assert.equal(first.status, 200);
+  const me1 = await call("/api/auth/me", { cookie: first.cookie });
+  assert.equal(me1.data.user.mustChangePassword, true, JSON.stringify(me1.data.user));
+  assert.ok(!JSON.stringify(me1.data).includes(id + id), "لا تُعاد كلمة المرور");
+  assert.equal((await call("/api/auth/change-password", { method: "POST", cookie: first.cookie, body: { oldPassword: id, newPassword: id } })).status, 400, "لا تطابق اسم المستخدم");
+  const ch = await call("/api/auth/change-password", { method: "POST", cookie: first.cookie, body: { oldPassword: id, newPassword: "Wali@2026new" } });
+  assert.equal(ch.status, 200, JSON.stringify(ch.data));
+  const me2 = await call("/api/auth/me", { cookie: ch.cookie });
+  assert.equal(me2.data.user.mustChangePassword, false);
+  const again = await login(G, id, "Wali@2026new");
+  assert.equal((await call("/api/auth/me", { cookie: again.cookie })).data.user.mustChangePassword, false);
+  // الموظف لا يظهر له التنبيه
+  const staffMe = await call("/api/auth/me", { cookie: admin });
+  assert.equal(staffMe.data.user.mustChangePassword, false);
+  // إعادة تعيين الإدارة لكلمة المرور إلى رقم الهوية تُعيد التنبيه عند الدخول التالي
+  const gid = made.data.id ?? made.data.guardianId;
+  const reset = await call(`/api/guardians/${gid}/password`, { method: "POST", cookie: admin, body: { password: id } });
+  assert.equal(reset.status, 200, JSON.stringify(reset.data));
+  const back = await login(G, id, id);
+  assert.equal((await call("/api/auth/me", { cookie: back.cookie })).data.user.mustChangePassword, true);
+});
+
 await test("ولي الأمر يرى أبناءه فقط (ملخص وأبناء)", async () => {
   const wali = await session(G, guardianNid, guardianNid);
   const kids = (await call("/api/guardians/children", { cookie: wali })).data.children;

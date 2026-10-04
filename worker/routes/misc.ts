@@ -6,7 +6,7 @@ import type { AppEnv } from "../env";
 import { requireAuth } from "../lib/auth";
 import { createPasswordRecord, newId, timingSafeEqual } from "../lib/crypto";
 import { audit, fail, loadSettings, parseBody } from "../lib/util";
-import { partsOf } from "../lib/parts";
+import { isHafiz } from "../lib/parts";
 
 /* ============ الإعدادات (المدير فقط) ============ */
 export const settingsRoutes = new Hono<AppEnv>();
@@ -120,7 +120,7 @@ publicRoutes.get("/stats", async (c) => {
   const one = async (sql: string) => (await c.env.DB.prepare(sql).bind(centerId).first<{ n: number }>())?.n ?? 0;
   return c.json({
     huffaz: (await c.env.DB.prepare("SELECT direction, last_surah AS lastSurah, last_ayah AS lastAyah FROM students WHERE center_id = ? AND archived_at IS NULL")
-      .bind(centerId).all<{ direction: string; lastSurah: number; lastAyah: number }>()).results.filter((s) => partsOf(s) >= 30).length,
+      .bind(centerId).all<{ direction: string; lastSurah: number; lastAyah: number }>()).results.filter(isHafiz).length,
     circles: await one("SELECT COUNT(*) AS n FROM circles WHERE center_id = ? AND active = 1"),
     students: await one("SELECT COUNT(*) AS n FROM students WHERE center_id = ? AND archived_at IS NULL"),
     sardStudents: await one("SELECT COUNT(DISTINCT student_id) AS n FROM sard_records WHERE center_id = ?"),

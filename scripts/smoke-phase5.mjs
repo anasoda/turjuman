@@ -61,6 +61,17 @@ await test("يرى حلقات مرحلته فقط", async () => {
   assert.ok(r.data.circles.every((c) => c.levelKey === "primary"), "ظهرت حلقة من مرحلة أخرى");
 });
 
+await test("جدول الحلقة: يعدّله مدير المرحلة لحلقات مرحلته فقط، ويُمنع خارجها", async () => {
+  const before = (await call(`/api/schedule?circleId=${primaryCircle.id}`, { cookie: admin })).data.entries
+    .map((e) => ({ weekday: e.weekday, slot: e.slot ?? "", start: e.start, end: e.end, place: e.place }));
+  const entry = { weekday: 3, start: "17:00", end: "18:30", place: "قاعة الاختبار" };
+  assert.equal((await call(`/api/schedule/${primaryCircle.id}`, { method: "PUT", cookie: manager, body: { entries: [entry] } })).status, 200, "حلقة من مرحلته");
+  const saved = (await call(`/api/schedule?circleId=${primaryCircle.id}`, { cookie: manager })).data.entries;
+  assert.ok(saved.length === 1 && saved[0].place === "قاعة الاختبار");
+  assert.equal((await call(`/api/schedule/${otherCircle.id}`, { method: "PUT", cookie: manager, body: { entries: [entry] } })).status, 403, "حلقة خارج مرحلته");
+  assert.equal((await call(`/api/schedule/${primaryCircle.id}`, { method: "PUT", cookie: admin, body: { entries: before } })).status, 200, "إعادة الجدول الأصلي");
+});
+
 await test("قائمة الطلاب محصورة بحلقات مرحلته", async () => {
   const r = await call("/api/students?pageSize=100", { cookie: manager });
   assert.equal(r.status, 200);
