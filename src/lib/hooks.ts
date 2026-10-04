@@ -54,3 +54,26 @@ export function useWantsNew(): boolean {
   }, [params, setParams]);
   return wants;
 }
+
+/**
+ * حالة تُحفظ في عنوان الصفحة (?key=value) بدل الذاكرة فقط: تبقى بعد التحديث (refresh) وتُشارَك بالرابط.
+ * تُكتب بـ replace كي لا يمتلئ سجل التصفح. القيمة الافتراضية لا تُكتب في العنوان.
+ */
+export function useUrlState(key: string, initial = ""): [string, (value: string) => void] {
+  const [params, setParams] = useSearchParams();
+  const value = params.has(key) ? params.get(key)! : initial;
+  const set = useCallback((next: string) => {
+    // من العنوان الحالي لا من لقطة العرض: استدعاءان متتاليان (مثل البحث ثم تصفير الصفحة) لا يمحو أحدهما الآخر
+    const copy = new URLSearchParams(window.location.search);
+    if (next === initial) copy.delete(key); else copy.set(key, next);
+    setParams(copy, { replace: true });
+  }, [key, initial, setParams]);
+  return [value, set];
+}
+
+/** رقم الصفحة في العنوان (?page=2)؛ الصفحة 1 لا تُكتب. */
+export function useUrlPage(key = "page"): [number, (page: number) => void] {
+  const [raw, setRaw] = useUrlState(key, "1");
+  const page = Math.max(1, Number(raw) || 1);
+  return [page, (next: number) => setRaw(String(Math.max(1, next)))];
+}

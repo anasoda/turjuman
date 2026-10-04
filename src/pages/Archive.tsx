@@ -1,15 +1,14 @@
-import { useState } from "react";
 import { useAction, useUi } from "../components/ui";
 import { api } from "../lib/api";
-import { initials, useDebounced, useFetch } from "../lib/hooks";
+import { initials, useDebounced, useFetch, useUrlPage, useUrlState } from "../lib/hooks";
 import type { Student } from "../lib/types";
 import { countAr, STUDENTS_AR } from "../lib/format";
 
 /** أرشيف الطلاب: كل من «حُذف» يُنقل هنا مع السبب ويمكن استرجاعه. */
 export function Archive() {
-  const [q, setQ] = useState("");
+  const [q, setQ] = useUrlState("q");
   const dq = useDebounced(q);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useUrlPage();
   const { data, error, loading, reload } = useFetch<{ students: Student[]; total: number }>(`/api/students?archived=1&pageSize=30&page=${page}${dq ? `&q=${encodeURIComponent(dq)}` : ""}`);
   const { run } = useAction();
   const { confirm } = useUi();

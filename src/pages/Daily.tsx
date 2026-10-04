@@ -6,7 +6,7 @@ import { PositionPicker } from "../components/PositionPicker";
 import { Field, Sheet, useAction, useUi } from "../components/ui";
 import { api } from "../lib/api";
 import { ATTENDANCE_LABELS, fmtDay, fmtPos, todayIso, type Attendance } from "../lib/format";
-import { initials, useFetch } from "../lib/hooks";
+import { initials, useFetch, useUrlState } from "../lib/hooks";
 import { useMe } from "../lib/session";
 import type { Circle } from "../lib/types";
 
@@ -27,8 +27,8 @@ export function Daily() {
   const isTeacher = user.role === "teacher";
   // /api/circles محصورة بالدور أصلاً، فالمعلّم يستقبل حلقاته هو — ومنها يختار (§15.5)
   const circles = useFetch<{ circles: Circle[] }>("/api/circles");
-  const [circleId, setCircleId] = useState("");
-  const [date, setDate] = useState(todayIso());
+  const [circleId, setCircleId] = useUrlState("circle");
+  const [date, setDate] = useUrlState("date", todayIso());
   // مدير المرحلة قد يدرّس حلقة (§15.3أ): تُفتح لوحته على حلقته هو أولاً ثم أول حلقة فعّالة
   const active = circles.data?.circles.filter((c) => c.active) ?? [];
   const mine = active.find((c) => c.primaryTeacherId === user.id || c.assistantTeacherId === user.id);

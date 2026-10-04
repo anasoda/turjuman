@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { useDebounced, useFetch } from "../lib/hooks";
+import { useDebounced, useFetch, useUrlState } from "../lib/hooks";
 
 interface Entry { id: number; action: string; entity: string; entityId: string; details: string; createdAt: number; userName: string | null }
 
@@ -11,7 +10,7 @@ const ENTITIES: Record<string, string> = { student: "طالب", staff: "كادر
 
 /** سجل التعديلات: من عدّل ماذا ومتى، مع بحث. */
 export function AuditLog() {
-  const [q, setQ] = useState("");
+  const [q, setQ] = useUrlState("q");
   const dq = useDebounced(q);
   const { data, error, loading } = useFetch<{ entries: Entry[] }>(`/api/audit?q=${encodeURIComponent(dq)}`);
   return (

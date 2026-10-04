@@ -4,11 +4,11 @@ import { ContactIcons, ContactRow } from "../components/Contact";
 import { GuardianFields, emptyGuardian } from "../components/GuardianFields";
 import { Field, Icons, Sheet, useAction, useUi } from "../components/ui";
 import { api } from "../lib/api";
-import { useDebounced, useFetch, useWantsNew } from "../lib/hooks";
+import { useDebounced, useFetch, useUrlState, useWantsNew } from "../lib/hooks";
 import type { Guardian, GuardianInput, Student } from "../lib/types";
 import { useMe } from "../lib/session";
 
-import { Link, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 
 interface OrphanStudent { id: string; name: string }
 
@@ -25,8 +25,7 @@ const templatesOf = (g: Guardian) => {
 export function Guardians() {
   const { user } = useMe();
   const teacher = user.role === "teacher";
-  const [searchParams] = useSearchParams();
-  const [q, setQ] = useState(searchParams.get("q") ?? "");
+  const [q, setQ] = useUrlState("q");
   const dq = useDebounced(q);
   const list = useFetch<{ guardians: Guardian[] }>(`/api/guardians${dq ? `?q=${encodeURIComponent(dq)}` : ""}`);
   const orphans = useFetch<{ students: OrphanStudent[] }>(teacher ? "" : "/api/guardians/orphans");

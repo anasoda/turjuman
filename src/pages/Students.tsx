@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { DIRECTION_LABELS, GENDER_LABELS, RELATION_LABELS } from "@shared/constants";
 import { SURAHS } from "@shared/quran-data";
 import { planTransfer } from "@shared/transfer-plan";
@@ -9,7 +9,7 @@ import { StudentImport } from "./StudentImport";
 import { StudentForm } from "./StudentForm";
 import { StudentPlan } from "./StudentPlan";
 import { api } from "../lib/api";
-import { initials, useDebounced, useFetch, useWantsNew } from "../lib/hooks";
+import { initials, useDebounced, useFetch, useUrlPage, useUrlState, useWantsNew } from "../lib/hooks";
 import { useMe } from "../lib/session";
 import type { Circle, Student } from "../lib/types";
 import { PhotoControls, StudentTools } from "./StudentExtras";
@@ -21,15 +21,14 @@ const PAGE = 30;
 export function Students() {
   const { user } = useMe();
   const { confirm, toast } = useUi();
-  const [searchParams] = useSearchParams();
   // لا نعرض للمعلم زر إضافة طالب؛ الإضافة تتطلب حلقة مسندة إليه.
   const canCreate = user.role === "admin" || user.role === "secretary" || user.role === "stage_manager";
-  const [q, setQ] = useState(searchParams.get("q") ?? "");
+  const [q, setQ] = useUrlState("q");
   const dq = useDebounced(q);
-  const [circleId, setCircleId] = useState("");
+  const [circleId, setCircleId] = useUrlState("circle");
   const [items, setItems] = useState<Student[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useUrlPage();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const wantsNew = useWantsNew();

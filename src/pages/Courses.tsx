@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { Field, Sheet, useAction, useUi } from "../components/ui";
 import { api } from "../lib/api";
-import { useDebounced, useFetch } from "../lib/hooks";
+import { useDebounced, useFetch, useUrlState } from "../lib/hooks";
 import { useMe } from "../lib/session";
 import type { Student } from "../lib/types";
 import { countAr, STUDENTS_AR } from "../lib/format";
@@ -42,7 +42,7 @@ export function Courses() {
 function CourseForm({ course, onClose, onSaved }: { course: Course | null; onClose: () => void; onSaved: () => void }) {
   const { busy, run } = useAction();
   const { confirm } = useUi();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useUrlState("q");
   const debounced = useDebounced(query);
   const students = useFetch<{ students: Student[] }>(`/api/students?pageSize=100${debounced ? `&q=${encodeURIComponent(debounced)}` : ""}`);
   const current = useFetch<{ students: Array<{ id: string; name: string }> }>(course ? `/api/courses/${course.id}` : null);

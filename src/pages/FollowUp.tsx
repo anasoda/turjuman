@@ -1,13 +1,13 @@
 import { useState } from "react";
-import { useFetch } from "../lib/hooks";
+import { useFetch, useUrlPage, useUrlState } from "../lib/hooks";
 import { StudentPortal } from "./StudentPortal";
 
 interface StudentRow { id: string; name: string; circleName: string | null }
 
 /** شاشة متابعة مشتركة للكادر؛ /api/students يطبق نطاق المعلّم ومدير المرحلة. */
 export function FollowUp() {
-  const [query, setQuery] = useState("");
-  const [page, setPage] = useState(1);
+  const [query, setQuery] = useUrlState("q");
+  const [page, setPage] = useUrlPage();
   const [picked, setPicked] = useState<StudentRow | null>(null);
   const { data, error } = useFetch<{ students: StudentRow[]; total: number }>(`/api/students?page=${page}&pageSize=30&q=${encodeURIComponent(query)}`);
   return <main className="page">

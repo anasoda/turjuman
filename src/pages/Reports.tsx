@@ -5,7 +5,7 @@ import { PositionPicker } from "../components/PositionPicker";
 import { Sheet, useAction, useUi } from "../components/ui";
 import { api } from "../lib/api";
 import { fmtPosPage, monthIso } from "../lib/format";
-import { useFetch } from "../lib/hooks";
+import { useFetch, useUrlState } from "../lib/hooks";
 import { downloadXlsx } from "../lib/xlsx-write";
 import { useMe } from "../lib/session";
 import type { Circle } from "../lib/types";
@@ -20,10 +20,10 @@ interface Report { month: string; circleId: string | null; circleName: string | 
 /** الكشف الشهري: يُولَّد تلقائياً من التسميع اليومي، ويعدَّل نهاية الحفظ يدوياً ثم يُحفظ. */
 export function Reports() {
   const { user } = useMe();
-  const [month, setMonth] = useState(monthIso());
+  const [month, setMonth] = useUrlState("month", monthIso());
   // /api/circles محصورة بالدور، فالمعلّم يستقبل حلقاته ومنها يختار (§15.5)
   const circles = useFetch<{ circles: Circle[] }>("/api/circles");
-  const [circleId, setCircleId] = useState("");
+  const [circleId, setCircleId] = useUrlState("circle");
   const active = circles.data?.circles.filter((c) => c.active) ?? [];
   const mine = active.find((c) => c.primaryTeacherId === user.id || c.assistantTeacherId === user.id);
   const effective = circleId || mine?.id || active[0]?.id || "";

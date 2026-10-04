@@ -5,7 +5,7 @@ import { PositionPicker } from "../components/PositionPicker";
 import { Field, Sheet, useAction, useUi } from "../components/ui";
 import { api } from "../lib/api";
 import { fmtPos, todayIso } from "../lib/format";
-import { useDebounced, useFetch } from "../lib/hooks";
+import { useDebounced, useFetch, useUrlPage, useUrlState } from "../lib/hooks";
 import { useMe } from "../lib/session";
 import type { Student } from "../lib/types";
 
@@ -18,11 +18,11 @@ interface SardRecord {
 export function Sard() {
   const { user } = useMe();
   const canWrite = user.role !== "exam_committee";
-  const [q, setQ] = useState("");
+  const [q, setQ] = useUrlState("q");
   const dq = useDebounced(q);
   const [items, setItems] = useState<SardRecord[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useUrlPage();
   const [adding, setAdding] = useState(false);
   const { confirm } = useUi();
   const { run } = useAction();
