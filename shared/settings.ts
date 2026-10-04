@@ -37,6 +37,12 @@ export interface CenterSettings {
   phonePrefix: string;
   /** توزيع درجات الاختبار الرسمي — المجموع يجب أن يساوي 100 */
   examQuestionSlots: ExamQuestionSlot[];
+  /** «طلاب يحتاجون متابعة» (§14.7): غيابات الشهر الجاري التي عندها يُنبَّه */
+  alertAbsenceCount: number;
+  /** أيام بلا تسميع يُنبَّه عندها */
+  alertNoReciteDays: number;
+  /** نسبة التأخر (٪) عن الخطة المتناسبة مع أيام الشهر التي يُنبَّه عندها */
+  alertPlanLagPct: number;
 }
 
 export const DEFAULT_SETTINGS: CenterSettings = {
@@ -68,5 +74,8 @@ export const DEFAULT_SETTINGS: CenterSettings = {
     { label: "السؤال الثالث", maxScore: 20, isQuranic: true },
     { label: "السؤال الرابع", maxScore: 20, isQuranic: true },
     { label: "أحكام التجويد", maxScore: 20, isQuranic: false },
-  ]
+  ],
+  alertAbsenceCount: 3,
+  alertNoReciteDays: 7,
+  alertPlanLagPct: 30
 };

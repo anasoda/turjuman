@@ -120,7 +120,13 @@ await test("جدول الحلقات: المدير يحدّد، والمعلّم 
   assert.equal(put.status, 200, JSON.stringify(put.data));
   assert.equal((await call(`/api/schedule/${fajr.id}`, { method: "PUT", cookie: admin, body: { entries: [{ weekday: 1, start: "18:00", end: "16:00" }] } })).status, 400);
   const mine = (await call("/api/schedule", { cookie: teacher })).data.entries;
-  assert.ok(mine.length === 2 && mine.every((e) => e.circleId === fajr.id));
+  // المعلّم 1 يدرّس حلقتين (الفجر واليقين) وكلتاهما لهما جدول في البذرة: يرى جدولهما فقط لا جدول حلقة غيره
+  const taught = (await call("/api/circles", { cookie: teacher })).data.circles.map((c) => c.id);
+  assert.ok(taught.includes(fajr.id));
+  assert.equal(mine.filter((e) => e.circleId === fajr.id).length, 2);
+  assert.ok(mine.every((e) => taught.includes(e.circleId)), "ظهر جدول حلقة لا يدرّسها");
+  const all = (await call("/api/schedule", { cookie: admin })).data.entries;
+  assert.ok(all.some((e) => !taught.includes(e.circleId)), "البذرة لا تضمّ جدول حلقة أخرى للمقارنة");
   assert.equal((await call(`/api/schedule/${fajr.id}`, { method: "PUT", cookie: teacher, body: { entries: [] } })).status, 403);
   const prayer = await call(`/api/schedule/${fajr.id}`, { method: "PUT", cookie: admin, body: { entries: [
     { weekday: 0, slot: "maghrib", start: "", end: "", place: "المسجد" },
@@ -201,6 +207,60 @@ await test("الحفّاظ يُحسبون من موضع الحفظ الفعلي 
   } finally {
     await put(orig);
     await call("/api/honor/consent", { method: "POST", cookie: admin, body: { studentId: s1.id, consent: false } });
+  }
+});
+
+await test("طلاب يحتاجون متابعة: الأسباب الثلاثة والنطاق والحدود من الإعدادات (البند 10)", async () => {
+  const stage = await session(G, "obai.stage1");
+  const committee = await session(G, "obai.committee");
+  const before = (await call("/api/settings", { cookie: admin })).data.settings;
+  const setTh = (th) => call("/api/settings", { method: "PUT", cookie: admin, body: { ...before, ...th } });
+  const mk = async (nationalId, name, joinedAt, phone) => {
+    const r = await call("/api/students", { method: "POST", cookie: admin, body: { nationalId, name, birth: "2012-01-01", gender: "male", circleId: fajr.id, direction: "descending",
+      lastSurah: 114, lastAyah: 0, joinedAt, monthlyPlanPages: 0, phoneCc: "970", phoneNational: "",
+      guardian: { name: "ولي متابعة", relation: "father", callPhone: phone, waCc: "970", waNational: phone, nationalId: "" } } });
+    assert.equal(r.status, 201, JSON.stringify(r.data));
+    return r.data.id;
+  };
+  const A = await mk("400000881", "طالب بلا تسميع منذ أيام", addDays(-10), "0599000881");
+  const B = await mk("400000882", "طالب غائب اليوم", today, "0599000882");
+  try {
+    assert.equal((await setTh({ alertAbsenceCount: 1, alertNoReciteDays: 7, alertPlanLagPct: 30 })).status, 200);
+    assert.equal((await call("/api/daily", { method: "POST", cookie: teacher, body: { studentId: B, date: today, attendance: "absent" } })).status >= 400, false);
+    const list = async (ck) => (await call("/api/stats/follow-up", { cookie: ck })).data;
+    const find = (d, id) => d.students.find((s) => s.id === id);
+
+    const admin1 = await list(admin);
+    assert.deepEqual(admin1.thresholds, { absenceCount: 1, noReciteDays: 7, planLagPct: 30 });
+    assert.deepEqual(find(admin1, A).reasons.map((r) => r.kind), ["noRecite"], "بلا تسميع منذ التحاقه قبل 10 أيام");
+    assert.equal(find(admin1, A).reasons[0].never, true);
+    assert.deepEqual(find(admin1, B).reasons.map((r) => r.kind), ["absence"], "غياب اليوم فقط (التحق اليوم فلا يُعدّ بلا تسميع)");
+
+    // التأخر عن الخطة: يُقاس من اليوم PLAN_LAG_MIN_DAY (7) من الشهر؛ قبله لا يُعدّ تأخراً
+    assert.equal((await call(`/api/students/${A}`, { method: "PATCH", cookie: admin, body: { monthlyPlanPages: 30 } })).status, 200);
+    const withPlan = find(await list(admin), A).reasons.map((r) => r.kind);
+    if (Number(today.slice(8, 10)) >= 7) assert.deepEqual(withPlan, ["noRecite", "planLag"], "بخطة 30 صفحة بلا إنجاز");
+    else assert.deepEqual(withPlan, ["noRecite"], "قبل اليوم السابع لا يُقاس التأخر");
+
+    // النطاق
+    for (const ck of [teacher, secretary, stage]) assert.ok(find(await list(ck), A), "يراه من حلقته أو من له النطاق");
+    const t3 = await list(teacher3);
+    assert.ok(!find(t3, A) && !find(t3, B), "معلّمة حلقة أخرى لا ترى طلاب الفجر");
+    assert.equal((await call("/api/stats/follow-up", { cookie: committee })).status, 403);
+    assert.equal((await call("/api/stats/follow-up", { cookie: student })).status, 403);
+
+    // الحدود من الإعدادات: رفع حد الغياب يُسقط التنبيه، وحد قيمة غير صالحة مرفوض
+    assert.equal((await setTh({ alertAbsenceCount: 2 })).status, 200);
+    assert.ok(!find(await list(admin), B), "غياب واحد لا يبلغ الحد الجديد (2)");
+    assert.equal((await setTh({ alertAbsenceCount: 0 })).status, 400);
+    assert.equal((await setTh({ alertNoReciteDays: 91 })).status, 400);
+    // عميل قديم لا يرسل حقول التنبيه: لا تُصفَّر حدود المدير
+    const { alertAbsenceCount, alertNoReciteDays, alertPlanLagPct, ...legacy } = before;
+    assert.equal((await call("/api/settings", { method: "PUT", cookie: admin, body: legacy })).status, 200);
+    assert.equal((await list(admin)).thresholds.absenceCount, 2);
+  } finally {
+    await setTh({});
+    for (const id of [A, B]) await call(`/api/students/${id}/archive`, { method: "POST", cookie: admin, body: { reason: "اختبار" } });
   }
 });
 

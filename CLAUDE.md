@@ -27,6 +27,7 @@ npm run dev                # server on :8787 and frontend on :5173 (proxy to /ap
 npm run typecheck
 npm test                    # unit (Vitest)
 npm run test:api           # integration (7 phases): requires wrangler dev and a clean local DB
+npm run test:api:fresh     # does it all: kill wrangler, wipe local D1, migrate, start server, seed, run test:api, stop
 npm run build
 npm run deploy             # builds itself; apply migrations before it: wrangler d1 migrations apply turjuman-v2-db --remote
 ```

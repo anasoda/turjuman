@@ -7,7 +7,8 @@ import { accessibleStudent, assertStageCircle, circleScope, stageTeacherScope, s
 import { requireAuth } from "../lib/auth";
 import { newId, timingSafeEqual } from "../lib/crypto";
 import { DATE_RE, MONTH_RE, monthOf, todayHebron } from "../lib/dates";
-import { audit, fail, parseBody } from "../lib/util";
+import { followUpReasons } from "../../shared/followup";
+import { audit, fail, loadSettings, parseBody } from "../lib/util";
 import { buildReportRows } from "./reports";
 import { isHafiz, withParts } from "../lib/parts";
 
@@ -309,6 +310,49 @@ statsRoutes.get("/students", requireAuth("admin", "secretary", "stage_manager", 
        FROM students s LEFT JOIN circles ci ON ci.id = s.circle_id WHERE s.center_id = ? AND s.archived_at IS NULL${scope.sql} ORDER BY s.name`
   ).bind(monthOf(todayHebron()), auth.centerId, ...scope.binds).all<{ direction: string; lastSurah: number; lastAyah: number }>();
   return c.json({ students: results.map(withParts) });
+});
+
+/**
+ * «طلاب يحتاجون متابعة» (§14.7): غياب متكرر هذا الشهر، أو بلا تسميع منذ N يوماً، أو تأخر عن الخطة الشهرية.
+ * الحدود من إعدادات المركز. النطاق: المعلّم حلقاته، مدير المرحلة مراحله، الإدارة الكل (studentScope).
+ * الطالب بلا حلقة لا يُتابَع بعد. حالة «ملغاة» للحصة (البند 12) لم تُنفَّذ بعد فلا استثناء لها هنا.
+ */
+statsRoutes.get("/follow-up", requireAuth("admin", "secretary", "teacher", "stage_manager"), async (c) => {
+  const auth = c.get("auth");
+  const today = todayHebron();
+  const month = monthOf(today);
+  const settings = await loadSettings(c.env.DB, auth.centerId);
+  const thresholds = { absenceCount: settings.alertAbsenceCount, noReciteDays: settings.alertNoReciteDays, planLagPct: settings.alertPlanLagPct };
+  const scope = studentScope(c);
+  const { results: students } = await c.env.DB.prepare(
+    `SELECT s.id, s.name, s.direction, s.last_surah AS lastSurah, s.last_ayah AS lastAyah, s.monthly_plan_pages AS monthlyPlanPages,
+            s.joined_at AS joinedAt, ci.id AS circleId, ci.name AS circleName
+       FROM students s JOIN circles ci ON ci.id = s.circle_id
+      WHERE s.center_id = ? AND s.archived_at IS NULL${scope.sql} ORDER BY s.name`
+  ).bind(auth.centerId, ...scope.binds).all<{ id: string; name: string; direction: "descending" | "ascending"; lastSurah: number; lastAyah: number; monthlyPlanPages: number; joinedAt: string | null; circleId: string; circleName: string }>();
+  const rows = await buildReportRows(c.env.DB, auth.centerId, month, students);
+  const rowBy = new Map(rows.map((r) => [r.studentId, r]));
+  const lastRecite = new Map<string, string>();
+  for (let i = 0; i < students.length; i += 80) {
+    const ids = students.slice(i, i + 80).map((s) => s.id);
+    const { results } = await c.env.DB.prepare(
+      `SELECT student_id AS studentId, MAX(date) AS last FROM daily_records
+        WHERE center_id = ? AND attendance IN ('present', 'late') AND student_id IN (${ids.map(() => "?").join(",")}) GROUP BY student_id`
+    ).bind(auth.centerId, ...ids).all<{ studentId: string; last: string }>();
+    for (const r of results) lastRecite.set(r.studentId, r.last);
+  }
+  const list = students
+    .map((s) => {
+      const r = rowBy.get(s.id);
+      const reasons = followUpReasons({
+        absences: r?.absent ?? 0, lastReciteDate: lastRecite.get(s.id) ?? null, joinedAt: s.joinedAt,
+        planPages: r?.planPages ?? 0, pages: r?.pages ?? 0, today
+      }, thresholds);
+      return { id: s.id, name: s.name, circleId: s.circleId, circleName: s.circleName, lastReciteDate: lastRecite.get(s.id) ?? null, reasons };
+    })
+    .filter((s) => s.reasons.length)
+    .sort((a, b) => b.reasons.length - a.reasons.length || a.name.localeCompare(b.name, "ar"));
+  return c.json({ month, today, thresholds, total: students.length, students: list });
 });
 
 statsRoutes.get("/teachers", requireAuth("admin", "secretary", "stage_manager"), async (c) => {

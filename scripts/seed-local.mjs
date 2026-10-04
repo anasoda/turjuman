@@ -52,9 +52,15 @@ async function seedCenter(centerId, centerName, prefix) {
   const c1 = await must("حلقة الفجر", call("/api/circles", { method: "POST", cookie, body: { name: "حلقة الفجر", category: "male", levelKey: "primary", active: true, primaryTeacherId: t1.data.id ?? null, assistantTeacherId: t2.data.id ?? null } }));
   const c2 = await must("حلقة النور", call("/api/circles", { method: "POST", cookie, body: { name: "حلقة النور", category: "female", levelKey: "talqeen", active: true, primaryTeacherId: t3.data.id ?? null, assistantTeacherId: null } }));
   // مدير المرحلة يدرّس حلقة في مرحلته أيضاً (قرار المالك: التعيين فوق حساب المعلّم)
-  await must("حلقة مدير المرحلة", call("/api/circles", { method: "POST", cookie, body: { name: "حلقة السلام", category: "male", levelKey: "primary", active: true, primaryTeacherId: sm.data.id ?? null, assistantTeacherId: null } }));
+  const c3 = await must("حلقة مدير المرحلة", call("/api/circles", { method: "POST", cookie, body: { name: "حلقة السلام", category: "male", levelKey: "primary", active: true, primaryTeacherId: sm.data.id ?? null, assistantTeacherId: null } }));
   // معلّم 1 يدرّس حلقة ثانية (هجرة 0009: رُفع قيد «حلقة واحدة لكل معلّم»)
-  await must("حلقة ثانية لمعلّم 1", call("/api/circles", { method: "POST", cookie, body: { name: "حلقة اليقين", category: "male", levelKey: "prep_secondary", active: true, primaryTeacherId: t1.data.id ?? null, assistantTeacherId: null } }));
+  const c4 = await must("حلقة ثانية لمعلّم 1", call("/api/circles", { method: "POST", cookie, body: { name: "حلقة اليقين", category: "male", levelKey: "prep_secondary", active: true, primaryTeacherId: t1.data.id ?? null, assistantTeacherId: null } }));
+
+  // جدول أسبوعي لكل حلقة (الأحد–الخميس 16:00–18:00) كما في المراكز الفعلية، فتجد الاختبارات جدولاً جاهزاً بدل جدول فارغ
+  for (const c of [c1, c2, c3, c4]) {
+    if (!c.data.id) continue;
+    await must("جدول حلقة", call(`/api/schedule/${c.data.id}`, { method: "PUT", cookie, body: { entries: [0, 1, 2, 3, 4].map((weekday) => ({ weekday, start: "16:00", end: "18:00", place: "المسجد" })) } }));
+  }
 
   // الطالبان 1 و2 أخوان يشتركان في ولي أمر واحد (بحسابه: اسم المستخدم وكلمة المرور = رقم الهوية §15.8).
   // الطالبة 3 لها ولي آخر بلا حساب — ولي الأمر كيان مستقل عن الحساب (§15.7).

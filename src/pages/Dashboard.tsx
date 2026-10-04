@@ -7,6 +7,7 @@ import type { Circle, GuardianChild } from "../lib/types";
 import { StudentPortal } from "./StudentPortal";
 import { ScheduleCard } from "./ScheduleAbsence";
 import { PrayerCard } from "../components/PrayerCard";
+import { AttentionCard } from "./Attention";
 import { Icons } from "../components/ui";
 import type { PrayerDay } from "@shared/prayer";
 
@@ -120,6 +121,8 @@ function StaffHome() {
         {manage && <div className="card stat"><b>{teachers ?? "—"}</b><small>المعلّمون</small></div>}
       </div>
 
+      {!needsSetup && user.role !== "exam_committee" && <AttentionCard />}
+
       {needsSetup && (
         <section className="card setup">
           <h2>ابدأ تجهيز المركز</h2>
@@ -167,6 +170,8 @@ function TeacherHome() {
         </div>
         <div className="stat" style={{ textAlign: "center" }}><b>{students.data?.total ?? "—"}</b><small>{mine.length > 1 ? "طلابي" : "طلاب حلقتي"}</small></div>
       </div>
+
+      <AttentionCard />
 
       <h2 className="section-title">اختصارات</h2>
       <div className="tiles">

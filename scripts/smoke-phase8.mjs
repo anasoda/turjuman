@@ -107,8 +107,13 @@ await test("الغياب يمسح المراجعة، والحضور مرة وا�
   assert.equal(row.record.reviewPages, 0);
 });
 
-const month = D1.slice(0, 7);
+// الخطة الشهرية تُحفظ للشهر الجاري فقط (PATCH/PUT)، فنختبر الكشف على الشهر الجاري بسجل اليوم نفسه (التسجيل خارج الجدول مسموح)،
+// لا على D1 التي قد تقع في شهر سابق فيصبح الاختبار معتمداً على تاريخ تشغيله.
+const todayHebron = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Hebron", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+const month = todayHebron.slice(0, 7);
 await test("الكشف الشهري يعرض صفحات المراجعة وخطتها", async () => {
+  const rec = await post(todayHebron, { attendance: "present", review: { from: { surah: 114, ayah: 1 }, to: { surah: 112, ayah: 4 }, grade: "" } });
+  assert.ok([200, 201].includes(rec.status), JSON.stringify(rec.data));
   const up = await call(`/api/students/${student.id}`, { method: "PATCH", cookie: admin, body: { monthlyReviewPlanPages: 20 } });
   assert.equal(up.status, 200, JSON.stringify(up.data));
   const r = await call(`/api/reports?month=${month}&circleId=${circle.id}`, { cookie: admin });

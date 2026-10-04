@@ -32,7 +32,11 @@ const settingsSchema = z.object({
   hijriOffset: z.number().int().min(-2, "التعديل بين −2 و+2 يوم").max(2, "التعديل بين −2 و+2 يوم"),
   phonePrefix: z.string().trim().regex(/^[0-9]{1,5}$/, "مقدمة الدولة أرقام فقط بلا +"),
   examQuestionSlots: z.array(z.object({ label: z.string().trim().min(1).max(100), maxScore: z.number().int().min(1).max(100), isQuranic: z.boolean() })).min(1).max(20)
-    .refine((slots) => slots.reduce((sum, slot) => sum + slot.maxScore, 0) === 100, "مجموع علامات أسئلة الاختبار يجب أن يساوي 100")
+    .refine((slots) => slots.reduce((sum, slot) => sum + slot.maxScore, 0) === 100, "مجموع علامات أسئلة الاختبار يجب أن يساوي 100"),
+  // اختيارية: عميل قديم محفوظ في ذاكرة PWA لا يرسلها فلا تُصفَّر حدود المدير
+  alertAbsenceCount: z.number().int().min(1, "عدد الغيابات بين 1 و31").max(31, "عدد الغيابات بين 1 و31").optional(),
+  alertNoReciteDays: z.number().int().min(1, "أيام بلا تسميع بين 1 و90").max(90, "أيام بلا تسميع بين 1 و90").optional(),
+  alertPlanLagPct: z.number().int().min(1, "نسبة التأخر بين 1 و100").max(100, "نسبة التأخر بين 1 و100").optional()
 });
 
 settingsRoutes.get("/", requireAuth("admin", "secretary", "teacher", "stage_manager", "exam_committee"), async (c) =>
@@ -44,7 +48,7 @@ settingsRoutes.put("/", requireAuth("admin"), async (c) => {
   const b = await parseBody(c, settingsSchema);
   const sorted = [...b.sardBands].sort((x, y) => y.min - x.min);
   const now = Date.now();
-  const stmts = (Object.keys(DEFAULT_SETTINGS) as (keyof typeof DEFAULT_SETTINGS)[]).map((key) =>
+  const stmts = (Object.keys(DEFAULT_SETTINGS) as (keyof typeof DEFAULT_SETTINGS)[]).filter((key) => b[key] !== undefined).map((key) =>
     c.env.DB.prepare(
       `INSERT INTO center_settings (center_id, key, value_json, updated_at) VALUES (?, ?, ?, ?)
        ON CONFLICT(center_id, key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`

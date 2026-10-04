@@ -54,6 +54,15 @@ export function SettingsPage() {
           </div>
         </SettingsSection>
 
+        <SettingsSection {...section("alerts")} title="تنبيهات المتابعة">
+          <p className="muted" style={{ margin: 0 }}>يظهر الطالب في «طلاب يحتاجون متابعة» عند بلوغ أي من هذه الحدود.</p>
+          <div className="form-grid two">
+            <Field label="غيابات الشهر" hint="عدد الغيابات في الشهر الجاري (1–31)"><input type="number" min={1} max={31} value={s.alertAbsenceCount} onChange={(e) => set("alertAbsenceCount", num(e.target.value))} /></Field>
+            <Field label="أيام بلا تسميع" hint="منذ آخر حضور (1–90)"><input type="number" min={1} max={90} value={s.alertNoReciteDays} onChange={(e) => set("alertNoReciteDays", num(e.target.value))} /></Field>
+            <Field label="التأخر عن الخطة (٪)" hint="عن الخطة المتناسبة مع أيام الشهر، من اليوم السابع (1–100)"><input type="number" min={1} max={100} value={s.alertPlanLagPct} onChange={(e) => set("alertPlanLagPct", num(e.target.value))} /></Field>
+          </div>
+        </SettingsSection>
+
         <SettingsSection {...section("levels")} title="مستويات الحلقات">
           {s.levels.map((l, i) => (
             <div className="repeat-row" key={l.key}>
