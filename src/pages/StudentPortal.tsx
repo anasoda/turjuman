@@ -10,6 +10,7 @@ import { useMe } from "../lib/session";
 import { SURAHS } from "@shared/quran-data";
 import { AbsenceReport, ScheduleCard } from "./ScheduleAbsence";
 import { AhkamCards } from "./AhkamPortal";
+import { FollowUpCard } from "./FollowUpCard";
 
 interface Summary {
   student: { id: string; name: string; direction: Direction; lastSurah: number; lastAyah: number; circleName: string | null; nextStart: Position | null; reviewLast: Position | null };
@@ -66,6 +67,7 @@ export function StudentPortal({ studentId }: { studentId?: string } = {}) {
       </div>
       <div className="actions"><button className="btn ghost small" type="button" disabled={busy} onClick={() => { if (progressRef.current) void run(() => saveAsImage(progressRef.current!, `إنجاز-${s.name}-${m.month}`), "تم حفظ صورة الإنجاز"); }}>تصدير الإنجاز كصورة</button></div>
 
+      {!staffView && <FollowUpCard studentId={studentId} />}
       {!staffView && <AbsenceReport studentId={studentId} />}
       {!staffView && <ScheduleCard studentId={studentId} />}
       {user.role === "guardian" && studentId && <AhkamCards studentId={studentId} />}

@@ -261,7 +261,7 @@ portalRoutes.get("/tests/:id", requireAuth("guardian"), async (c) => {
   return c.json({ test, questions });
 });
 /** كل ما يراه الطالب عن نفسه في طلب واحد: الحضور والتسميع والاختبارات والسرد والكشف والإنجاز الشهري. */
-portalRoutes.get("/summary", requireAuth("student", "guardian"), async (c) => {
+async function portalStudent(c: Context<AppEnv>) {
   const auth = c.get("auth");
   const wanted = new URL(c.req.url).searchParams.get("studentId") || "";
   const base = `SELECT s.id, s.name, s.direction, s.last_surah AS lastSurah, s.last_ayah AS lastAyah, s.monthly_plan_pages AS monthlyPlanPages,
@@ -275,7 +275,48 @@ portalRoutes.get("/summary", requireAuth("student", "guardian"), async (c) => {
       : c.env.DB.prepare(`${base}s.user_id = ?`).bind(auth.centerId, auth.userId);
   const student = await stmt.first<StudentRow & { memorizedParts: number; circleName: string | null }>();
   if (!student) fail(404, auth.role === "guardian" ? "لا يوجد أبناء مرتبطون بحسابك" : "لا يوجد ملف طالب لهذا الحساب");
-  return c.json(await studentSummary(c, student));
+  return student;
+}
+portalRoutes.get("/summary", requireAuth("student", "guardian"), async (c) => {
+  return c.json(await studentSummary(c, await portalStudent(c)));
+});
+
+/** بطاقة المتابعة الأسبوعية/الشهرية (§14.8): week = آخر 7 أيام، month = الشهر الجاري حتى اليوم. */
+portalRoutes.get("/card", requireAuth("student", "guardian"), async (c) => {
+  const auth = c.get("auth");
+  const student = await portalStudent(c);
+  const period = new URL(c.req.url).searchParams.get("period") === "month" ? "month" : "week";
+  const to = todayHebron();
+  const from = period === "month"
+    ? `${monthOf(to)}-01`
+    : new Date(Date.parse(`${to}T00:00:00Z`) - 6 * 86400000).toISOString().slice(0, 10);
+  const { results: rows } = await c.env.DB.prepare(
+    `SELECT date, attendance, pages, review_pages AS reviewPages, grade, note
+       FROM daily_records WHERE center_id = ? AND student_id = ? AND date BETWEEN ? AND ? ORDER BY date`
+  ).bind(auth.centerId, student.id, from, to).all<{ date: string; attendance: string; pages: number | null; reviewPages: number | null; grade: string; note: string }>();
+  const count = (a: string) => rows.filter((r) => r.attendance === a).length;
+  const lastNote = [...rows].reverse().find((r) => r.note);
+  const next = await c.env.DB.prepare(
+    `SELECT date, next_memorize_from_surah AS mfs, next_memorize_from_ayah AS mfa, next_memorize_to_surah AS mts, next_memorize_to_ayah AS mta,
+            next_review_from_surah AS rfs, next_review_from_ayah AS rfa, next_review_to_surah AS rts, next_review_to_ayah AS rta, next_note AS note
+       FROM daily_records WHERE center_id = ? AND student_id = ? AND (next_memorize_from_surah IS NOT NULL OR next_review_from_surah IS NOT NULL OR next_note <> '')
+      ORDER BY date DESC LIMIT 1`
+  ).bind(auth.centerId, student.id).first<{ date: string; mfs: number | null; mfa: number | null; mts: number | null; mta: number | null; rfs: number | null; rfa: number | null; rts: number | null; rta: number | null; note: string }>();
+  const { results: tests } = await c.env.DB.prepare(
+    `SELECT kind, test_type AS testType, parts, range_text AS rangeText, test_date AS testDate, score, passed
+       FROM tests WHERE center_id = ? AND student_id = ? AND status = 'completed' ORDER BY COALESCE(test_date, '0') DESC, created_at DESC LIMIT 2`
+  ).bind(auth.centerId, student.id).all();
+  const [current] = await buildReportRows(c.env.DB, auth.centerId, monthOf(to), [student]);
+  return c.json({
+    student: { id: student.id, name: student.name, circleName: student.circleName },
+    period, from, to,
+    attendance: { sessions: rows.length, present: count("present"), late: count("late"), absent: count("absent"), excused: count("excused") },
+    pages: rows.reduce((n, r) => n + (r.pages ?? 0), 0),
+    reviewPages: rows.reduce((n, r) => n + (r.reviewPages ?? 0), 0),
+    month: { pages: current.pages, planPages: current.planPages, percent: current.percent, reviewPages: current.reviewPages, reviewPlanPages: current.reviewPlanPages, reviewPercent: current.reviewPercent },
+    next, tests,
+    teacherNote: lastNote ? { date: lastNote.date, text: lastNote.note } : null
+  });
 });
 
 /** ملخص طالب للكادر (للتقرير المطبوع): المعلّم لطلاب حلقته فقط. */

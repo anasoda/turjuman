@@ -224,6 +224,16 @@ await test("ولي الأمر يرى أبناءه فقط (ملخص وأبناء)
   assert.equal((await call(`/api/portal/summary?studentId=${notMine.id}`, { cookie: wali })).status, 404);
   assert.equal((await call("/api/students", { cookie: wali })).status, 403);
   assert.equal((await call("/api/guardians", { cookie: wali })).status, 403);
+
+  // بطاقة المتابعة (§14.8): أسبوع وشهر، ولا تكشف إلا أبناءه
+  for (const period of ["week", "month"]) {
+    const card = (await call(`/api/portal/card?period=${period}&studentId=${kids[1].id}`, { cookie: wali })).data;
+    assert.equal(card.student.id, kids[1].id);
+    assert.equal(card.period, period);
+    assert.ok(card.attendance.sessions >= 0 && Array.isArray(card.tests));
+  }
+  assert.equal((await call(`/api/portal/card?studentId=${notMine.id}`, { cookie: wali })).status, 404);
+  assert.equal((await call("/api/portal/card", { cookie: admin })).status, 403);
 });
 
 await test("ولي الأمر يبلّغ عن غياب ابنه ويصل المعلّم إشعار", async () => {
