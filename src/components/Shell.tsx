@@ -81,6 +81,19 @@ function Bell() {
   );
 }
 
+/** تنبيه ظاهر: سجلات محفوظة على الجهاز رفضها الخادم (لا تصل إلا بمراجعتك) — حتى لا تبقى نتيجة محبوسة دون علم أحد. */
+function SyncAlert() {
+  const [s, setS] = useState<SyncState>(getSyncState());
+  useEffect(() => subscribeSync(setS), []);
+  if (!s.rejected) return null;
+  return (
+    <div className="pw-banner" role="alert">
+      <span className="grow">يوجد {s.rejected} سجل محفوظ على جهازك رفضه الخادم ولم يصل. راجعه أو احذفه حتى لا يبقى عالقاً.</span>
+      <Link className="btn gold" to="/app/more">مراجعة السجلات</Link>
+    </div>
+  );
+}
+
 const PW_BANNER_KEY = "tq_pw_banner_dismissed";
 
 /** تنبيه (بلا إجبار — §15.8): كلمة مرور ولي الأمر ما زالت رقم هويته. يُغلَق للجلسة الحالية ويختفي نهائياً بعد التغيير. */
@@ -131,6 +144,7 @@ export function Shell() {
         </div>
       </header>
       {user.role === "guardian" && user.mustChangePassword && <PasswordBanner />}
+      <SyncAlert />
       <Outlet />
       <nav className="bottom-nav" aria-label="التنقل الرئيسي">
         {navFor(user.role).map((n) => (

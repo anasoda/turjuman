@@ -121,16 +121,31 @@ export async function enqueue(userId: string, path: string, body: unknown, metho
   await refreshPending(userId);
 }
 
+/** ما يقرؤه السجل (يتأخر إن رُفض سجل سابق يكتب فيه) وما يكتبه. الرفض يحجب السجلات المعتمدة عليه فقط، لا الصندوق كله. */
+export function dependencies(item: OutboxItem): { reads: string[]; writes: string[] } {
+  const body = (item.body ?? {}) as { studentId?: string; date?: string; proposals?: Array<{ id?: string }> };
+  if (item.path === "/api/daily") { const key = `daily:${body.studentId}:${body.date}`; return { reads: [key], writes: [key, "daily*"] }; }
+  if (item.path === "/api/reports/save") return { reads: ["daily*"], writes: [] };
+  if (item.path === "/api/tests/propose") { const keys = (body.proposals ?? []).map((p) => `test:${p.id}`); return keys.length ? { reads: keys, writes: keys } : { reads: ["*"], writes: ["*"] }; }
+  const test = /^\/api\/tests\/([^/]+)\/(approve|reject|session)$/.exec(item.path);
+  if (test) return { reads: [`test:${test[1]}`], writes: [`test:${test[1]}`] };
+  if (item.path === "/api/sard" || item.path === "/api/tests/trial" || item.path === "/api/staff-attendance") { const key = `own:${item.id}`; return { reads: [key], writes: [key] }; }
+  return { reads: ["*"], writes: ["*"] };
+}
+
 let flushing = false;
-/** يرسل صندوق المستخدم الحالي بالترتيب. السجل المرفوض يبقى للمراجعة وتُوقف السلسلة كي لا يُرسل كشف يعتمد عليه. */
+/** يرسل صندوق المستخدم الحالي بالترتيب. السجل المرفوض يبقى للمراجعة ويحجب السجلات المعتمدة عليه فقط (نفس الاختبار، أو نفس الطالب واليوم، أو كشف شهري)؛ والبقية تُرسل. */
 export async function flushOutbox(userId: string, send: (item: OutboxItem) => Promise<{ status: number; error?: string }>): Promise<void> {
   if (flushing) return;
   flushing = true;
   setSyncState({ syncing: true });
+  const blocked = new Set<string>();
   try {
     const items = (await outboxAll()).filter((i) => i.userId === userId).sort((a, b) => a.createdAt - b.createdAt || (a.id ?? 0) - (b.id ?? 0));
     for (const item of items) {
-      if (item.status === "rejected") break;
+      const dep = dependencies(item);
+      if (item.status === "rejected") { dep.writes.forEach((k) => blocked.add(k)); continue; }
+      if (blocked.has("*") || dep.reads.some((k) => blocked.has(k))) continue;
       let res: { status: number; error?: string };
       try {
         res = await send(item);
@@ -145,7 +160,8 @@ export async function flushOutbox(userId: string, send: (item: OutboxItem) => Pr
         const error = res.error || "رفض الخادم أحد السجلات المحفوظة";
         await outboxPut({ ...item, status: "rejected", error });
         setSyncState({ failures: [...state.failures, error] });
-        break;
+        dep.writes.forEach((k) => blocked.add(k));
+        continue;
       }
       await outboxDelete(item.id!);
     }

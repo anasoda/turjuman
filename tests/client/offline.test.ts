@@ -121,6 +121,35 @@ describe("العمل دون إنترنت", () => {
     expect(getSyncState().failures).toContain("نهاية التسميع يجب ألا تسبق بدايته");
   });
 
+  it("سجل مرفوض لاختبار محذوف لا يحجب اختباراً آخر ولا التسميع، ويحجب سجلات اختباره والكشف الشهري فقط", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    await api("/api/tests/gone/approve", { body: { testDate: null } });
+    await api("/api/tests/gone/session", { body: { questions: [] } });
+    await api("/api/tests/alive/approve", { body: { testDate: null } });
+    await api("/api/daily", { body: { studentId: "s1", date: "2026-09-27" } });
+    await api("/api/reports/save", { body: { rows: [] } });
+    const sent: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => { sent.push(path); return path === "/api/tests/gone/approve" ? json(404, { error: "الاختبار غير موجود" }) : json(201, { ok: true }); }));
+    await flushNow();
+    expect(sent).toEqual(["/api/tests/gone/approve", "/api/tests/alive/approve", "/api/daily", "/api/reports/save"]);
+    const left = await outboxAll();
+    expect(left.map((i) => i.path)).toEqual(["/api/tests/gone/approve", "/api/tests/gone/session"]);
+    expect(getSyncState().rejected).toBe(1);
+    expect(getSyncState().pending).toBe(1);
+  });
+
+  it("رفض تسميع يحجب الكشف الشهري اللاحق فقط", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    await api("/api/daily", { body: { studentId: "s1", date: "2026-09-27" } });
+    await api("/api/sard", { body: { studentId: "s1" } });
+    await api("/api/reports/save", { body: { rows: [] } });
+    const sent: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => { sent.push(path); return path === "/api/daily" ? json(400, { error: "غير صالح" }) : json(201, { ok: true }); }));
+    await flushNow();
+    expect(sent).toEqual(["/api/daily", "/api/sard"]);
+    expect((await outboxAll()).map((i) => i.path)).toEqual(["/api/daily", "/api/reports/save"]);
+  });
+
   it("حضور الكادر والكشف الشهري يُحفظان ويظهران محلياً قبل المزامنة", async () => {
     const dayPath = "/api/staff-attendance?date=2026-09-27";
     const reportPath = "/api/reports?month=2026-09&circleId=c1";

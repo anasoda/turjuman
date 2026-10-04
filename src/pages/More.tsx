@@ -90,7 +90,7 @@ export function More() {
           <b>سجلات تحتاج مراجعة</b>
           <small className="muted">أوقفنا المزامنة عند أول سجل رفضه الخادم حتى لا يُرسل كشف يعتمد على بيانات ناقصة.</small>
           {rejected.map((item) => <div className="card" key={item.id}>
-            <b>{item.path === "/api/daily" ? "تسميع يومي" : item.path === "/api/staff-attendance" ? "حضور الكادر" : item.path === "/api/reports/save" ? "كشف شهري" : item.path === "/api/sard" ? "سرد" : "اختبار تجريبي"}</b>
+            <b>{item.path === "/api/daily" ? "تسميع يومي" : item.path === "/api/staff-attendance" ? "حضور الكادر" : item.path === "/api/reports/save" ? "كشف شهري" : item.path === "/api/sard" ? "سرد" : item.path === "/api/tests/propose" ? "ترشيح اختبار رسمي" : item.path.endsWith("/approve") ? "اعتماد اختبار" : item.path.endsWith("/reject") ? "رفض اقتراح اختبار" : item.path.endsWith("/session") ? "جلسة/نتيجة اختبار رسمي" : "اختبار تجريبي"}</b>
             <small className="muted" style={{ display: "block" }}>{new Date(item.createdAt).toLocaleString("ar-PS")} · {item.error}</small>
             <div className="actions">
               <button className="btn small" type="button" onClick={() => void run(async () => { await retryRejected(item.id!, user.id); await flushNow(); })}>إعادة المحاولة</button>
