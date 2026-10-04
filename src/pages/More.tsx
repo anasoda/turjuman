@@ -21,6 +21,7 @@ export function More() {
   const [installEvt, setInstallEvt] = useState<InstallEvent | null>(null);
   const [pushOn, setPushOn] = useState(false);
   const [rejected, setRejected] = useState<OutboxItem[]>([]);
+  const [stalled, setStalled] = useState<OutboxItem[]>([]);
   const { run } = useAction();
   const admin = user.role === "admin";
   const staffish = admin || user.role === "secretary";
@@ -35,7 +36,7 @@ export function More() {
   }, []);
   useEffect(() => { void restorePush().then(setPushOn).catch(() => setPushOn(false)); }, []);
   useEffect(() => {
-    const load = () => { void outboxAll().then((items) => setRejected(items.filter((item) => item.userId === user.id && item.status === "rejected"))); };
+    const load = () => { void outboxAll().then((items) => { setRejected(items.filter((item) => item.userId === user.id && item.status === "rejected")); setStalled(items.filter((item) => item.userId === user.id && item.status !== "rejected" && item.stalled)); }); };
     load();
     return subscribeSync(load);
   }, [user.id]);
@@ -80,6 +81,11 @@ export function More() {
       </div>
       <h2 className="section-title">حسابي</h2>
       <div className="list">
+        {stalled.length > 0 && <div className="card form-grid">
+          <b>سجلات معلّقة لم تصل إلى الخادم</b>
+          <small className="muted">{stalled[0].stalled} · آخر محاولة {new Date(stalled[0].stalledAt ?? 0).toLocaleString("ar-PS")}. اضغط مؤشر الحالة أعلى الشاشة لإعادة المحاولة.</small>
+          <small className="muted">عدد السجلات المعلّقة: {stalled.length}</small>
+        </div>}
         {rejected.length > 0 && <div className="card form-grid">
           <b>سجلات تحتاج مراجعة</b>
           <small className="muted">أوقفنا المزامنة عند أول سجل رفضه الخادم حتى لا يُرسل كشف يعتمد على بيانات ناقصة.</small>

@@ -17,6 +17,9 @@ export interface OutboxItem {
   createdAt: number;
   status?: "rejected";
   error?: string;
+  /** سبب تعثّر الإرسال المؤقت (انتهاء الجلسة/عطل الخادم/الشبكة) — السجل يبقى معلّقاً ويُعاد إرساله */
+  stalled?: string;
+  stalledAt?: number;
 }
 
 export interface SyncState {
@@ -132,11 +135,12 @@ export async function flushOutbox(userId: string, send: (item: OutboxItem) => Pr
       try {
         res = await send(item);
       } catch {
+        await outboxPut({ ...item, stalled: "تعذّر الوصول إلى الخادم (الشبكة)", stalledAt: Date.now() });
         setSyncState({ online: false });
         break; // الشبكة غير متاحة
       }
-      if (res.status === 401) break; // الجلسة انتهت؛ يبقى الصندوق حتى يعود المستخدم
-      if (res.status >= 500) break; // عطل مؤقت في الخادم
+      if (res.status === 401) { await outboxPut({ ...item, stalled: "انتهت الجلسة؛ سجّل الدخول من جديد", stalledAt: Date.now() }); break; } // يبقى الصندوق حتى يعود المستخدم
+      if (res.status >= 500) { await outboxPut({ ...item, stalled: `عطل في الخادم (${res.status})${res.error ? `: ${res.error}` : ""}`, stalledAt: Date.now() }); break; } // عطل مؤقت في الخادم
       if (res.status >= 400) {
         const error = res.error || "رفض الخادم أحد السجلات المحفوظة";
         await outboxPut({ ...item, status: "rejected", error });
