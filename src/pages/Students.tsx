@@ -166,7 +166,9 @@ function StudentDetail({ student: s, circles, onClose, onEdit, onChanged }: { st
             <div key={g.id}>
               <Link to={`/app/guardians?q=${encodeURIComponent(g.nationalId ?? g.name)}`} style={{ textDecoration: "none", color: "inherit", display: "block" }}>
                 <ContactRow cc={g.waCc} national={g.waNational} callNational={g.callPhone} label={g.name}
-                  title={`${RELATION_LABELS[g.relation]}: ${g.name}`} subject={`بخصوص الطالب ${s.name}`} />
+                  title={`${RELATION_LABELS[g.relation]}: ${g.name}`} subject={`بخصوص الطالب ${s.name}`}
+                  templates={{ guardian: g.name, students: [{ name: s.name, circle: s.circleName, memorized: s.memorizedParts, plan: s.monthlyPlanPages,
+                    position: `سورة ${surah}${s.lastAyah ? ` — آية ${s.lastAyah}` : ""}` }] }} />
               </Link>
             </div>
           ))}

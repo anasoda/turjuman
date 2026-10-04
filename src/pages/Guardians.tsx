@@ -12,6 +12,12 @@ import { Link, useSearchParams } from "react-router-dom";
 
 interface OrphanStudent { id: string; name: string }
 
+/** قوالب واتساب لولي الأمر بأبنائه غير المؤرشفين؛ بلا أبناء يبقى الرابط المباشر. */
+const templatesOf = (g: Guardian) => {
+  const students = g.children.filter((k) => !k.archived).map((k) => ({ name: k.name, circle: k.circleName }));
+  return students.length ? { guardian: g.name, students } : undefined;
+};
+
 /**
  * أولياء الأمور (§15.7): ولي الأمر كيان مستقل، وحسابه اختياري يُنشأ لاحقاً.
  * اسم المستخدم وكلمة المرور الأولية = رقم هوية ولي الأمر، ولا إجبار على تغييرها (§15.8).
@@ -64,7 +70,7 @@ export function Guardians() {
                 <small>{g.children.length ? g.children.map((k) => k.name.split(" ")[0]).join(" · ") : "لا أبناء مرتبطون"}</small>
               </span>
             </button>
-            <ContactIcons cc={g.waCc} national={g.waNational} callNational={g.callPhone} label={g.name} subject={`ولي أمر ${g.children[0]?.name ?? ""}`} />
+            <ContactIcons cc={g.waCc} national={g.waNational} callNational={g.callPhone} label={g.name} subject={`ولي أمر ${g.children[0]?.name ?? ""}`} templates={templatesOf(g)} />
           </div>
         ))}
         {!list.loading && !list.data?.guardians.length && <div className="empty">لا يوجد أولياء أمور بعد.</div>}
@@ -202,7 +208,7 @@ function GuardianDetail({ g, teacher, onClose, onChanged }: { g: Guardian; teach
         <dt>الحساب</dt><dd dir="ltr" style={{ textAlign: "end" }}>{g.hasAccount ? `${g.username}${g.active ? "" : " (موقوف)"}` : "لا حساب بعد"}</dd>
       </dl>
       <div className="contact-block">
-        <ContactRow cc={g.waCc} national={g.waNational} callNational={g.callPhone} label={g.name} title="التواصل" subject={`ولي أمر ${g.children[0]?.name ?? ""}`} />
+        <ContactRow cc={g.waCc} national={g.waNational} callNational={g.callPhone} label={g.name} title="التواصل" subject={`ولي أمر ${g.children[0]?.name ?? ""}`} templates={templatesOf(g)} />
       </div>
       <h3 style={{ marginBottom: 4 }}>الأبناء</h3>
       {g.children.length ? (
