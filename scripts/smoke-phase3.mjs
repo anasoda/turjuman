@@ -122,6 +122,13 @@ await test("جدول الحلقات: المدير يحدّد، والمعلّم 
   const mine = (await call("/api/schedule", { cookie: teacher })).data.entries;
   assert.ok(mine.length === 2 && mine.every((e) => e.circleId === fajr.id));
   assert.equal((await call(`/api/schedule/${fajr.id}`, { method: "PUT", cookie: teacher, body: { entries: [] } })).status, 403);
+  const prayer = await call(`/api/schedule/${fajr.id}`, { method: "PUT", cookie: admin, body: { entries: [
+    { weekday: 0, slot: "maghrib", start: "", end: "", place: "المسجد" },
+    { weekday: 2, slot: "maghrib", start: "16:00", end: "18:00", place: "المسجد" }
+  ] } });
+  assert.equal(prayer.status, 200, JSON.stringify(prayer.data));
+  const saved = (await call(`/api/schedule?circleId=${fajr.id}`, { cookie: admin })).data.entries;
+  assert.ok(saved.length === 2 && saved.every((e) => e.slot === "maghrib" && e.start === "" && e.end === ""));
 });
 
 await test("حضور الكادر: للإدارة فقط مع ملخص شهري", async () => {

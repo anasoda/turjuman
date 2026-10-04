@@ -66,21 +66,26 @@ async function checkStudents(db: D1Database, centerId: string, ids: string[]): P
   return clean;
 }
 
-/** أبناء ولي أمر (أو عدة أولياء) كصفوف مسطّحة. */
-async function childrenOf(db: D1Database, centerId: string, guardianIds: string[]) {
-  if (!guardianIds.length) return [];
-  const marks = guardianIds.map(() => "?").join(",");
-  const { results } = await db
-    .prepare(
-      `SELECT s.guardian_id AS guardianId, s.id, s.name, s.direction, s.last_surah AS lastSurah, s.last_ayah AS lastAyah,
-              s.archived_at AS archivedAt, ci.name AS circleName
-         FROM students s
-         LEFT JOIN circles ci ON ci.id = s.circle_id
-        WHERE s.guardian_id IN (${marks}) AND s.center_id = ? ORDER BY s.name`
-    )
-    .bind(...guardianIds, centerId)
-    .all<{ guardianId: string; id: string; name: string; direction: string; lastSurah: number; lastAyah: number; archivedAt: number | null; circleName: string | null }>();
-  return results;
+interface ChildRow { guardianId: string; id: string; name: string; direction: string; lastSurah: number; lastAyah: number; archivedAt: number | null; circleName: string | null }
+
+/** أبناء ولي أمر (أو عدة أولياء) كصفوف مسطّحة. D1 يقبل 100 معامل ربط كحد أقصى، فتُقسَّم القائمة. */
+export async function childrenOf(db: D1Database, centerId: string, guardianIds: string[]): Promise<ChildRow[]> {
+  const rows: ChildRow[] = [];
+  for (let i = 0; i < guardianIds.length; i += 80) {
+    const part = guardianIds.slice(i, i + 80);
+    const { results } = await db
+      .prepare(
+        `SELECT s.guardian_id AS guardianId, s.id, s.name, s.direction, s.last_surah AS lastSurah, s.last_ayah AS lastAyah,
+                s.archived_at AS archivedAt, ci.name AS circleName
+           FROM students s
+           LEFT JOIN circles ci ON ci.id = s.circle_id
+          WHERE s.guardian_id IN (${part.map(() => "?").join(",")}) AND s.center_id = ? ORDER BY s.name`
+      )
+      .bind(...part, centerId)
+      .all<ChildRow>();
+    rows.push(...results);
+  }
+  return rows;
 }
 
 /**

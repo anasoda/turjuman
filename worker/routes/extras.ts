@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { z } from "zod";
 import { PRAYER_SLOTS } from "../../shared/constants";
 import type { AppEnv } from "../env";
@@ -65,15 +66,22 @@ publicPrayerRoutes.get("/prayer", async (c) => {
 /* ============================ جدول الحلقات ============================ */
 export const scheduleRoutes = new Hono<AppEnv>();
 
-const scheduleSchema = z.object({
+export const scheduleSchema = z.object({
   entries: z.array(z.object({
     weekday: z.number().int().min(0).max(6),
     /** '' = الموعد بالساعات؛ غير ذلك اسم الصلاة (§15.6) */
     slot: z.enum(["", ...PRAYER_SLOTS]).default(""),
-    start: z.string().regex(TIME_RE, "وقت البداية غير صالح"),
-    end: z.string().regex(TIME_RE, "وقت النهاية غير صالح"),
+    start: z.string().default(""),
+    end: z.string().default(""),
     place: z.string().trim().max(80).default("")
-  }).refine((e) => e.slot !== "" || e.start < e.end, "وقت النهاية يجب أن يلي البداية")).max(14)
+  }).superRefine((e, ctx) => {
+    if (e.slot) return;
+    if (!TIME_RE.test(e.start)) ctx.addIssue({ code: "custom", path: ["start"], message: "وقت البداية غير صالح" });
+    if (!TIME_RE.test(e.end)) ctx.addIssue({ code: "custom", path: ["end"], message: "وقت النهاية غير صالح" });
+    if (TIME_RE.test(e.start) && TIME_RE.test(e.end) && e.start >= e.end) {
+      ctx.addIssue({ code: "custom", path: ["end"], message: "وقت النهاية يجب أن يلي البداية" });
+    }
+  }).transform((e) => e.slot ? { ...e, start: "", end: "" } : e)).max(14)
 });
 
 /** الطالب يرى جدول حلقته، المعلّم جدول حلقته، الإداريون أي حلقة (أو الكل). */
@@ -355,7 +363,7 @@ exportRoutes.get("/", requireAuth("admin"), async (c) => {
 /* ============================ لوحة مالك النظام (عدة مراكز) ============================ */
 export const ownerPanelRoutes = new Hono<AppEnv>();
 
-function ownerOnly(c: import("hono").Context<AppEnv>) {
+function ownerOnly(c: Context<AppEnv>) {
   const expected = c.env.ADMIN_BOOTSTRAP_KEY || "";
   const provided = c.req.header("x-bootstrap-key") || "";
   if (!expected || !provided || !timingSafeEqual(provided, expected)) fail(401, "غير مصرّح");
