@@ -1,10 +1,11 @@
 import { useState } from "react";
 import type { Direction } from "@shared/constants";
+import { planPace } from "@shared/pace";
 import { countPages, isValidRange, planPercent, type Position } from "@shared/quran";
 import { PositionPicker } from "../components/PositionPicker";
 import { Sheet, useAction, useUi } from "../components/ui";
 import { api } from "../lib/api";
-import { fmtPosPage, monthIso } from "../lib/format";
+import { fmtPosPage, monthIso, todayIso } from "../lib/format";
 import { useFetch, useUrlState } from "../lib/hooks";
 import { downloadXlsx } from "../lib/xlsx-write";
 import { useMe } from "../lib/session";
@@ -39,7 +40,7 @@ export function Reports() {
   const view = (r: Row) => {
     const end = edits[r.studentId] ?? r.end;
     const pages = edits[r.studentId] && r.start ? countPages(r.direction, r.start, edits[r.studentId]) : r.pages;
-    return { end, pages, percent: planPercent(pages, r.planPages) };
+    return { end, pages, percent: planPercent(pages, r.planPages), pace: month === monthIso() ? planPace(r.planPages, pages, todayIso()) : null };
   };
 
   const save = async () => {
@@ -91,6 +92,11 @@ export function Reports() {
               <div style={{ marginTop: 6 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".88rem" }}><span>الحفظ: {v.pages} من {r.planPages} صفحة</span><b>{v.percent}%</b></div>
                 <div style={{ height: 8, borderRadius: 4, background: "var(--line)", overflow: "hidden" }}><div style={{ height: "100%", width: `${Math.min(100, v.percent)}%`, background: v.percent >= 100 ? "var(--ok)" : "var(--green-2)" }} /></div>
+                {v.pace && v.pace.status !== "early" && v.pace.status !== "done" && (
+                  <div className="muted" style={{ fontSize: ".82rem", marginTop: 4, color: v.pace.status === "behind" ? "var(--danger, #b3261e)" : undefined }}>
+                    المتوقع حتى اليوم {v.pace.expectedPages} صفحة · {v.pace.status === "behind" ? `متأخر ${Math.abs(v.pace.diffPages)} صفحة` : "على الخط أو متقدم"}
+                  </div>
+                )}
               </div>
               <div style={{ marginTop: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".88rem" }}><span>المراجعة: {r.reviewPages} من {r.reviewPlanPages} صفحة · {r.reviewDays} يوم</span><b>{r.reviewPercent}%</b></div>

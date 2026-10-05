@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { DIRECTION_LABELS, type Direction } from "@shared/constants";
+import { planPace } from "@shared/pace";
 import type { Position } from "@shared/quran";
 import { Sheet, useAction } from "../components/ui";
 import { saveAsImage } from "../lib/image-export";
-import { ATTENDANCE_LABELS, fmtDay, fmtPos, fmtPosPage, TEST_STATUS_LABELS, TEST_TYPE_LABELS, type Attendance } from "../lib/format";
+import { ATTENDANCE_LABELS, fmtDay, fmtPos, fmtPosPage, monthIso, todayIso, TEST_STATUS_LABELS, TEST_TYPE_LABELS, type Attendance } from "../lib/format";
 import { useFetch } from "../lib/hooks";
 import { useMe } from "../lib/session";
 import { SURAHS } from "@shared/quran-data";
@@ -40,6 +41,7 @@ export function StudentPortal({ studentId }: { studentId?: string } = {}) {
   if (error) return <div className="error-box">{error}</div>;
   if (!data) return <p className="muted">جارٍ التحميل…</p>;
   const { student: s, month: m } = data;
+  const pace = m.month === monthIso() ? planPace(m.planPages, m.pages, todayIso()) : null;
   const last: Position = { surah: s.lastSurah, ayah: s.lastAyah };
   const pos = (a: number | null, b: number | null) => (a && b ? fmtPos({ surah: a, ayah: b }) : "—");
 
@@ -60,6 +62,11 @@ export function StudentPortal({ studentId }: { studentId?: string } = {}) {
         <h3>إنجاز هذا الشهر</h3>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".92rem", marginTop: 4 }}><span>الحفظ: {m.pages} من {m.planPages} صفحة</span><b>{m.percent}%</b></div>
         <div className="progress"><i style={{ width: `${Math.min(100, m.percent)}%` }} /></div>
+        {pace && pace.status !== "early" && (
+          <small className="muted" style={{ display: "block", marginTop: 4 }}>
+            {pace.status === "done" ? "ما شاء الله، أُنجزت خطة هذا الشهر" : pace.status === "ahead" ? `على الوتيرة المتوقعة (المتوقع حتى اليوم نحو ${pace.expectedPages} صفحة)` : `المتوقع حتى اليوم نحو ${pace.expectedPages} صفحة، والباقي يُستدرك بإذن الله`}
+          </small>
+        )}
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".92rem", marginTop: 10 }}><span>المراجعة: {m.reviewPages} من {m.reviewPlanPages} صفحة</span><b>{m.reviewPercent}%</b></div>
         <div className="progress"><i style={{ width: `${Math.min(100, m.reviewPercent)}%` }} /></div>
         <small className="muted">حضور {m.present} · غياب {m.absent} · بعذر {m.excused}</small>

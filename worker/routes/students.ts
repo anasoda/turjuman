@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { AJKAM_COURSES, GUARDIAN_RELATIONS, NATIONAL_ID_RE, PHONE_RE, WA_PREFIXES, type GuardianRelation } from "../../shared/constants";
+import type { Direction } from "../../shared/constants";
 import type { AppEnv } from "../env";
 import { requireAuth } from "../lib/auth";
 import { createPasswordRecord, newId } from "../lib/crypto";
@@ -8,10 +9,12 @@ import { audit, fail, loadSettings, parseBody } from "../lib/util";
 import { partsOf } from "../lib/parts";
 import { SURAHS } from "../../shared/quran-data";
 import { canEditMonthlyPlan } from "../../shared/monthly-plan";
+import { suggestMonthlyPlan } from "../../shared/pace";
 import { MONTH_RE, monthOf, todayHebron } from "../lib/dates";
 import { planTransfer } from "../lib/transfers";
 import { assertStageCircle, stageCircleSql, stagesOf, teacherCircleIds } from "../lib/access";
 import { findOrCreateGuardian, guardianFields } from "./guardians";
+import { planHistory } from "../lib/plan-history";
 
 export const studentRoutes = new Hono<AppEnv>();
 
@@ -417,8 +420,24 @@ studentRoutes.get("/:id/plan", requireAuth("admin", "secretary", "teacher", "sta
   const plan = await c.env.DB.prepare(
     "SELECT memorize_pages AS monthlyPlanPages, review_pages AS monthlyReviewPlanPages FROM student_monthly_plans WHERE center_id = ? AND student_id = ? AND month = ?"
   ).bind(auth.centerId, student.id, month).first<{ monthlyPlanPages: number; monthlyReviewPlanPages: number }>();
+  // اقتراح الهدف: متوسط صفحات الحفظ الفعلية في الأشهر الثلاثة السابقة لشهر الخطة (للمحفّظ أن يتجاهله)
+  const prior = [1, 2, 3].map((n) => new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1 - n, 1)).toISOString().slice(0, 7));
+  const history = (await planHistory(c.env.DB, auth.centerId, { id: student.id, direction: student.direction as Direction }, prior)).map((h) => ({ month: h.month, pages: h.pages }));
   return c.json({ month, monthlyPlanPages: plan?.monthlyPlanPages ?? 0, monthlyReviewPlanPages: plan?.monthlyReviewPlanPages ?? 0,
-    editable: canEditMonthlyPlan(todayHebron(), month), set: !!plan });
+    editable: canEditMonthlyPlan(todayHebron(), month), set: !!plan, history, suggestion: suggestMonthlyPlan(history.map((h) => h.pages)) });
+});
+
+/** سجل الخطط: خطة كل شهر (حفظ ومراجعة) مقابل المنجز الفعلي، لآخر 12 شهراً مع الشهر القادم إن وُضعت له خطة. */
+studentRoutes.get("/:id/plan-history", requireAuth("admin", "secretary", "teacher", "stage_manager", "exam_committee"), async (c) => {
+  const student = await loadStudent(c, c.req.param("id"));
+  const auth = c.get("auth");
+  const upcoming = (m: string) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 1)).toISOString().slice(0, 7);
+  const current = monthOf(todayHebron());
+  const months = [upcoming(current), current];
+  for (let n = 1; n < 12; n++) months.push(new Date(Date.UTC(Number(current.slice(0, 4)), Number(current.slice(5, 7)) - 1 - n, 1)).toISOString().slice(0, 7));
+  const rows = (await planHistory(c.env.DB, auth.centerId, { id: student.id, direction: student.direction as Direction }, months))
+    .filter((r) => r.set || r.saved || r.pages > 0 || r.reviewPages > 0);
+  return c.json({ current, months: rows });
 });
 
 studentRoutes.put("/:id/plan", requireAuth("admin", "secretary", "teacher", "stage_manager"), async (c) => {

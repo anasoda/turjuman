@@ -1,6 +1,6 @@
 import { useMemo, useState, type FormEvent } from "react";
 import type { Direction } from "@shared/constants";
-import { countPages, countVerses, isValidRange, mushafPageFor, nextStart, rangeDirection, type Position } from "@shared/quran";
+import { countPages, countVerses, endAfterPages, isValidRange, mushafPageFor, nextStart, rangeDirection, type Position } from "@shared/quran";
 import { CancelSessionBar } from "../components/CancelSession";
 import { PositionPicker } from "../components/PositionPicker";
 import { Field, Sheet, useAction, useUi } from "../components/ui";
@@ -19,7 +19,7 @@ interface DailyRecord {
   nextMemorizeFromSurah: number | null; nextMemorizeFromAyah: number | null; nextMemorizeToSurah: number | null; nextMemorizeToAyah: number | null;
   nextReviewFromSurah: number | null; nextReviewFromAyah: number | null; nextReviewToSurah: number | null; nextReviewToAyah: number | null; nextNote: string;
 }
-interface Board { date: string; circleId: string | null; circleName?: string; scheduled?: boolean; cancellation?: { id: string; reason: string } | null; rows: Array<{ student: BoardStudent; record: DailyRecord | null; absenceNotice: string | null }> }
+interface Board { date: string; circleId: string | null; circleName?: string; scheduled?: boolean; monthSessions?: number | null; cancellation?: { id: string; reason: string } | null; rows: Array<{ student: BoardStudent; record: DailyRecord | null; absenceNotice: string | null }> }
 
 /** التسميع اليومي: لوحة طلاب الحلقة ليوم محدد، والضغط على طالب يفتح نموذج الحضور والتسميع. */
 export function Daily() {
@@ -91,12 +91,12 @@ export function Daily() {
         ))}
         {!board.loading && !rows.length && <div className="empty">{noCircle ? (isTeacher ? "لم تُسنَد إليك حلقة بعد." : "لا توجد حلقات فعّالة.") : "لا يوجد طلاب في هذه الحلقة."}</div>}
       </div>
-      {editing && <DailyForm date={date} student={editing.student} record={editing.record} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void board.reload(); }} />}
+      {editing && <DailyForm date={date} monthSessions={board.data?.monthSessions ?? null} student={editing.student} record={editing.record} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void board.reload(); }} />}
     </main>
   );
 }
 
-function DailyForm({ date, student, record, onClose, onSaved }: { date: string; student: BoardStudent; record: DailyRecord | null; onClose: () => void; onSaved: () => void }) {
+function DailyForm({ date, monthSessions, student, record, onClose, onSaved }: { date: string; monthSessions: number | null; student: BoardStudent; record: DailyRecord | null; onClose: () => void; onSaved: () => void }) {
   const { settings } = useMe();
   const { busy, run } = useAction();
   const { confirm } = useUi();
@@ -142,6 +142,10 @@ function DailyForm({ date, student, record, onClose, onSaved }: { date: string; 
   const nRevDir = rangeDirection(dir, nRevFrom, nRevTo);
   const nRevValid = !doNextReview || nRevDir !== null;
   const nextValid = !attends || (nMemValid && nRevValid);
+  // حصة اللقاء من الخطة الشهرية = خطة الشهر ÷ عدد حصص الحلقة فيه (مقترح يعدّله المحفّظ)
+  const memShare = monthSessions ? student.monthlyPlanPages / monthSessions : 0;
+  const revShare = monthSessions ? student.monthlyReviewPlanPages / monthSessions : 0;
+  const fmtShare = (n: number) => String(Math.round(n * 10) / 10);
   const nothing = attends && !doHifz && !doReview;
   const valid = hifzValid && reviewValid && nextValid && !nothing;
   const calc = useMemo(() => (attends && doHifz && hifzValid ? { verses: countVerses(dir, from, to), pages: countPages(dir, from, to) } : null), [attends, doHifz, hifzValid, dir, from, to]);
@@ -227,22 +231,24 @@ function DailyForm({ date, student, record, onClose, onSaved }: { date: string; 
               <b>المطلوب في اللقاء القادم</b>
               <p className="muted" style={{ margin: 0, fontSize: ".85rem" }}>يمكن تحديد حفظ ومراجعة معاً؛ يُرسَل إشعاراً فورياً لولي الأمر بما هو مطلوب من الطالب في اللقاء القادم.</p>
               <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 700 }}>
-                <input type="checkbox" checked={doNextMemorize} onChange={(e) => setDoNextMemorize(e.target.checked)} style={{ width: 18, height: 18 }} />حفظ
+                <input type="checkbox" checked={doNextMemorize} onChange={(e) => { setDoNextMemorize(e.target.checked); if (e.target.checked && !hadNextMemorize && memShare > 0) setNMemTo(endAfterPages(dir, nMemFrom, memShare)); }} style={{ width: 18, height: 18 }} />حفظ
               </label>
               {doNextMemorize && (
                 <>
                   <PositionPicker label="من" value={nMemFrom} onChange={setNMemFrom} />
                   <PositionPicker label="إلى" value={nMemTo} onChange={setNMemTo} />
+                  {memShare > 0 && <button className="btn ghost small" type="button" onClick={() => setNMemTo(endAfterPages(dir, nMemFrom, memShare))}>اقتراح النهاية من الخطة (≈ {fmtShare(memShare)} صفحة)</button>}
                   {!nMemValid && <div className="error-box">نهاية حفظ اللقاء القادم يجب ألا تسبق بدايته وفق اتجاه حفظ الطالب.</div>}
                 </>
               )}
               <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 700 }}>
-                <input type="checkbox" checked={doNextReview} onChange={(e) => setDoNextReview(e.target.checked)} style={{ width: 18, height: 18 }} />مراجعة
+                <input type="checkbox" checked={doNextReview} onChange={(e) => { setDoNextReview(e.target.checked); if (e.target.checked && !hadNextReview && revShare > 0) setNRevTo(endAfterPages(nRevDir ?? dir, nRevFrom, revShare)); }} style={{ width: 18, height: 18 }} />مراجعة
               </label>
               {doNextReview && (
                 <>
                   <PositionPicker label="من" value={nRevFrom} onChange={setNRevFrom} />
                   <PositionPicker label="إلى" value={nRevTo} onChange={setNRevTo} />
+                  {revShare > 0 && <button className="btn ghost small" type="button" onClick={() => setNRevTo(endAfterPages(nRevDir ?? dir, nRevFrom, revShare))}>اقتراح النهاية من الخطة (≈ {fmtShare(revShare)} صفحة)</button>}
                   {!nRevValid && <div className="error-box">نهاية مراجعة اللقاء القادم تسبق بدايتها.</div>}
                 </>
               )}

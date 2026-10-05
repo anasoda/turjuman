@@ -12,7 +12,7 @@
     "test": "vitest run",
     "db:migrate:local": "wrangler d1 migrations apply turjuman-v2-db --local",
     "db:seed:local": "node scripts/seed-local.mjs",
-    "test:api": "node scripts/smoke-api.mjs && node scripts/smoke-phase2.mjs && node scripts/smoke-phase3.mjs && node scripts/smoke-phase4.mjs && node scripts/smoke-phase5.mjs && node scripts/smoke-phase6.mjs && node scripts/smoke-phase7.mjs && node scripts/smoke-phase8.mjs && node scripts/smoke-phase9.mjs && node scripts/smoke-exams.mjs && node scripts/smoke-ajkam.mjs",
+    "test:api": "node scripts/smoke-api.mjs && node scripts/smoke-phase2.mjs && node scripts/smoke-phase3.mjs && node scripts/smoke-phase4.mjs && node scripts/smoke-phase5.mjs && node scripts/smoke-phase6.mjs && node scripts/smoke-phase7.mjs && node scripts/smoke-phase8.mjs && node scripts/smoke-phase9.mjs && node scripts/smoke-exams.mjs && node scripts/smoke-ajkam.mjs && node scripts/smoke-plan-history.mjs",
     "test:api:fresh": "node scripts/test-api-fresh.mjs",
     "deploy": "npm run build && wrangler deploy"
   },

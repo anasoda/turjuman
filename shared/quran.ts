@@ -184,6 +184,48 @@ export function planPercent(pages: number, planPages: number): number {
   return planPages > 0 ? Math.round((pages / planPages) * 100) : 0;
 }
 
+/* ---------- حصة اللقاء من الخطة ---------- */
+
+let ayahWeights: Map<number, number> | null = null;
+
+/** وزن كل صفحة لكل آية = 1 ÷ عدد آيات صفحتها، فمجموع أوزان آيات صفحة كاملة = 1 (تُحسب مرة واحدة). */
+function pageAyahCounts(): Map<number, number> {
+  if (ayahWeights) return ayahWeights;
+  const prefix: number[] = [0];
+  for (const [, n] of SURAHS) prefix.push(prefix[prefix.length - 1] + n);
+  const abs = (surah: number, ayah: number) => prefix[surah - 1] + ayah;
+  const total = prefix[prefix.length - 1];
+  ayahWeights = new Map();
+  PAGE_STARTS.forEach(([page, s, a], i) => {
+    const next = PAGE_STARTS[i + 1];
+    ayahWeights!.set(page, (next ? abs(next[1], next[2]) : total + 1) - abs(s, a));
+  });
+  return ayahWeights;
+}
+
+/**
+ * نهاية مقطع يغطي نحو `pages` صفحة (يقبل الكسور كنصف صفحة) ابتداءً من `from` وفق اتجاه الحفظ.
+ * تُجمع أوزان الآيات (كل آية جزء من صفحتها) حتى تبلغ الحصة، وتؤخذ الآية الأقرب إلى الحصة، وبحدّ أدنى آية.
+ * اقتراح للمحفّظ يعدّله بحرية، لا قيد.
+ */
+export function endAfterPages(direction: Direction, from: Position, pages: number): Position {
+  if (!(pages > 0) || !isValidPosition(from)) return from;
+  const counts = pageAyahCounts();
+  let cur = from;
+  let prev = from;
+  let cum = 0;
+  for (let guard = 0; guard < 6300; guard++) {
+    const before = cum;
+    cum += 1 / (counts.get(mushafPageFor(cur.surah, cur.ayah)) ?? 1);
+    if (cum >= pages - 1e-9) return cur !== from && Math.abs(before - pages) < Math.abs(cum - pages) ? prev : cur;
+    const nxt = nextStart(direction, cur);
+    if (!nxt) return cur;
+    prev = cur;
+    cur = nxt;
+  }
+  return cur;
+}
+
 /* ---------- درجات السرد ---------- */
 
 export interface ScoreSettings {

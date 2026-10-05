@@ -58,6 +58,19 @@ async function circleHasSession(db: D1Database, circleId: string, date: string) 
   return all.results.some(r => r.weekday === weekdayOf(date));
 }
 
+/** عدد حصص الحلقة في شهر التاريخ حسب جدولها الأسبوعي (null إن لم يُضبط جدول)؛ أساس حصة اللقاء من الخطة الشهرية. */
+async function monthSessionCount(db: D1Database, circleId: string, date: string): Promise<number | null> {
+  const { results } = await db.prepare("SELECT weekday FROM circle_schedule WHERE circle_id = ?").bind(circleId).all<{ weekday: number }>();
+  if (!results.length) return null;
+  const days = new Set(results.map((r) => r.weekday));
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  let n = 0;
+  for (let d = 1; d <= last; d++) if (days.has(new Date(Date.UTC(year, month - 1, d)).getUTCDay())) n++;
+  return n;
+}
+
 /** آخر مراجعة قبل التاريخ لكل طالب في حلقة، ومنها يُقترح موضع بداية المراجعة (نهايتها + آية). */
 async function lastReviews(db: D1Database, centerId: string, circleId: string, before: string): Promise<Map<string, ReviewEnd>> {
   const { results } = await db.prepare(
@@ -100,7 +113,7 @@ dailyRoutes.get("/board", requireAuth("admin", "secretary", "teacher", "stage_ma
   const noticeBy = new Map(notices.map((n) => [n.studentId, n.reason]));
   const cancellation = await c.env.DB.prepare("SELECT id, reason FROM session_cancellations WHERE circle_id = ? AND date = ?").bind(circleId, date).first<{ id: string; reason: string }>();
   return c.json({
-    date, circleId, circleName: circle.name, scheduled, cancellation: cancellation ?? null,
+    date, circleId, circleName: circle.name, scheduled, monthSessions: await monthSessionCount(c.env.DB, circleId, date), cancellation: cancellation ?? null,
     rows: students.map((s) => ({ student: { ...s, nextStart: nextStart(s.direction, { surah: s.lastSurah, ayah: s.lastAyah }), ...reviewHint(s.direction, lastRev.get(s.id), s.reviewStartSurah, s.reviewStartAyah) }, record: byStudent.get(s.id) ?? null, absenceNotice: noticeBy.get(s.id) ?? null }))
   });
 });
