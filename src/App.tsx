@@ -15,6 +15,7 @@ import { Tests } from "./pages/Tests";
 import { Announcements } from "./pages/Announcements";
 import { Honor } from "./pages/Honor";
 import { Attention } from "./pages/Attention";
+import { CircleDay } from "./pages/CircleDay";
 import { FollowUp } from "./pages/FollowUp";
 import { Insights } from "./pages/Insights";
 import { Notifications } from "./pages/Notifications";
@@ -58,6 +59,7 @@ export function App() {
         <Route index element={<Dashboard />} />
         <Route path="students" element={<Only roles={["admin", "secretary", "teacher", "stage_manager", "exam_committee"]}><Students /></Only>} />
         <Route path="follow-up" element={<Only roles={["admin", "secretary", "teacher", "stage_manager", "exam_committee"]}><FollowUp /></Only>} />
+        <Route path="circle-day" element={<Only roles={["admin", "secretary", "stage_manager"]}><CircleDay /></Only>} />
         <Route path="attention" element={<Only roles={["admin", "secretary", "teacher", "stage_manager"]}><Attention /></Only>} />
         <Route path="daily" element={<Only roles={["admin", "secretary", "teacher", "stage_manager"]}><Daily /></Only>} />
         <Route path="sard" element={<Only roles={["admin", "secretary", "teacher", "stage_manager", "exam_committee"]}><Sard /></Only>} />

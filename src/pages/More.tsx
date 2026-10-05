@@ -59,6 +59,7 @@ export function More() {
       <h2 className="section-title">المتابعة</h2>
       <div className="list">
         {(staffish || stageManager || user.role === "teacher") && link("/app/daily", "التسميع اليومي", "الحضور والتسميع لكل طالب", Icons.check)}
+        {(staffish || stageManager) && link("/app/circle-day", "متابعة الحلقات", "سير التسجيل اليومي وتنبيه المحفّظ", Icons.chart, "sky")}
         {notStudent && link("/app/reports", "الكشف الشهري", "الإنجاز مقابل الخطة الشهرية", Icons.clipboard, "sky")}
         {notStudent && link("/app/sard", "السرد", "سجلات السرد والدرجات", Icons.mic, "amber")}
         {notStudent && link("/app/tests", "الاختبارات", "التجريبية والرسمية", Icons.award, "plum")}

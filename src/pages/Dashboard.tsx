@@ -143,6 +143,7 @@ function StaffHome() {
         {manage && <Tile to="/app/circles?new=1" icon={Icons.plus} title="إضافة حلقة" sub="حلقة جديدة بمعلّمها" />}
         {manage && <Tile to="/app/staff?new=1" icon={Icons.staff} title="إضافة معلّم" sub="حساب للمعلّم أو الكادر" color="teal" />}
         {(manage || stageManager) && <Tile to="/app/daily" icon={Icons.check} title="التسميع اليومي" sub="الحضور والتسميع" color="gold" />}
+        {(manage || stageManager) && <Tile to="/app/circle-day" icon={Icons.chart} title="متابعة الحلقات" sub="سير التسجيل اليومي وتنبيه المحفّظ" color="sky" />}
         {stageManager && <Tile to="/app/staff-attendance" icon={Icons.calendar} title="حضور المعلمين" sub="تسجيل حضور معلّمي مرحلتي" color="teal" />}
         <Tile to="/app/reports" icon={Icons.clipboard} title="الكشف الشهري" sub="الإنجاز مقابل الخطة" color="sky" />
         <Tile to="/app/tests" icon={Icons.award} title="الاختبارات" sub="التجريبية والرسمية" color="plum" />
