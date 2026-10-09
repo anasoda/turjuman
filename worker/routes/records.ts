@@ -19,7 +19,7 @@ const pos = z.object({ surah: z.number().int().min(1).max(114), ayah: z.number()
 const dailySchema = z.object({
   studentId: z.string().min(1),
   date: z.string().regex(DATE_RE, "التاريخ غير صالح"),
-  attendance: z.enum(["present", "absent", "excused", "late"]),
+  attendance: z.enum(["present", "absent", "excused", "late", "not_memorized"]),
   from: pos.nullable().default(null),
   to: pos.nullable().default(null),
   grade: z.string().max(30).default(""),
@@ -164,7 +164,7 @@ dailyRoutes.post("/", requireAuth("admin", "secretary", "teacher", "stage_manage
   let from: Position | null = null, to: Position | null = null;
   let rFrom: Position | null = null, rTo: Position | null = null;
   let rVerses = 0, rPages = 0;
-  // الغائب (بعذر أو دونه) لا تسميع ولا مراجعة له؛ الحاضر والمتأخر يُسجَّل حفظهما و/أو مراجعتهما (واحد منهما على الأقل)
+  // الغائب (بعذر أو دونه) و«مش حافظ» (حضر دون تسميع) لا تسميع ولا مراجعة لهما؛ الحاضر والمتأخر يُسجَّل حفظهما و/أو مراجعتهما (واحد منهما على الأقل)
   if (b.attendance === "present" || b.attendance === "late") {
     if (!b.from && !b.to && !b.review) fail(400, "حدّد نطاق الحفظ الجديد أو المراجعة (واحداً على الأقل)");
     if (b.from || b.to) {

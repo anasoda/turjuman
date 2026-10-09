@@ -7,7 +7,7 @@ import { useFetch } from "../lib/hooks";
 interface Card {
   student: { id: string; name: string; circleName: string | null };
   period: "week" | "month"; from: string; to: string;
-  attendance: { sessions: number; present: number; late: number; absent: number; excused: number };
+  attendance: { sessions: number; present: number; late: number; absent: number; excused: number; notMemorized: number };
   pages: number; reviewPages: number;
   month: { pages: number; planPages: number; percent: number; reviewPages: number; reviewPlanPages: number; reviewPercent: number };
   next: { date: string; mfs: number | null; mfa: number | null; mts: number | null; mta: number | null; rfs: number | null; rfa: number | null; rts: number | null; rta: number | null; note: string } | null;
@@ -41,7 +41,7 @@ export function FollowUpCard({ studentId }: { studentId?: string }) {
             <b>{data.student.name}</b>
             <div className="muted" style={{ fontSize: ".85rem" }}>{data.student.circleName ?? "بلا حلقة"} · من {fmtDay(data.from)} إلى {fmtDay(data.to)}</div>
             <dl className="kv" style={{ marginTop: 8 }}>
-              <dt>الحضور</dt><dd>{data.attendance.sessions ? `حاضر ${data.attendance.present + data.attendance.late} · غائب ${data.attendance.absent} · بعذر ${data.attendance.excused} (من ${data.attendance.sessions} لقاء)` : "لا لقاءات مسجّلة في هذه الفترة"}</dd>
+              <dt>الحضور</dt><dd>{data.attendance.sessions ? `حاضر ${data.attendance.present + data.attendance.late} · غائب ${data.attendance.absent} · بعذر ${data.attendance.excused}${data.attendance.notMemorized ? ` · مش حافظ ${data.attendance.notMemorized}` : ""} (من ${data.attendance.sessions} لقاء)` : "لا لقاءات مسجّلة في هذه الفترة"}</dd>
               <dt>حفظ جديد</dt><dd>{data.pages} صفحة</dd>
               <dt>مراجعة</dt><dd>{data.reviewPages} صفحة</dd>
             </dl>

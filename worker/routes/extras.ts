@@ -279,7 +279,7 @@ statsRoutes.get("/overview", requireAuth("admin", "secretary", "stage_manager", 
   }
   const first = `${list[0]}-01`;
   const { results: daily } = await c.env.DB.prepare(
-    `SELECT substr(date, 1, 7) AS month, SUM(CASE WHEN attendance IN ('present', 'late') THEN 1 ELSE 0 END) AS present, SUM(CASE WHEN attendance = 'absent' THEN 1 ELSE 0 END) AS absent,
+    `SELECT substr(date, 1, 7) AS month, SUM(CASE WHEN attendance IN ('present', 'late', 'not_memorized') THEN 1 ELSE 0 END) AS present, SUM(CASE WHEN attendance = 'absent' THEN 1 ELSE 0 END) AS absent,
             SUM(CASE WHEN attendance = 'excused' THEN 1 ELSE 0 END) AS excused, SUM(pages) AS pages
        FROM daily_records WHERE center_id = ? AND date >= ?${only} GROUP BY substr(date, 1, 7)`
   ).bind(auth.centerId, first, ...onlyBinds).all<{ month: string; present: number; absent: number; excused: number; pages: number }>();
@@ -301,7 +301,7 @@ statsRoutes.get("/students", requireAuth("admin", "secretary", "stage_manager", 
     `SELECT s.id, s.name, s.national_id AS nationalId, s.birth, s.gender, s.direction, s.last_surah AS lastSurah, s.last_ayah AS lastAyah,
             COALESCE((SELECT p.memorize_pages FROM student_monthly_plans p WHERE p.center_id = s.center_id AND p.student_id = s.id AND p.month = ?), 0) AS monthlyPlanPages,
             ci.id AS circleId, ci.name AS circleName, ci.level_key AS levelKey,
-            (SELECT COUNT(*) FROM daily_records d WHERE d.student_id = s.id AND d.attendance IN ('present', 'late')) AS present,
+            (SELECT COUNT(*) FROM daily_records d WHERE d.student_id = s.id AND d.attendance IN ('present', 'late', 'not_memorized')) AS present,
             (SELECT COUNT(*) FROM daily_records d WHERE d.student_id = s.id AND d.attendance = 'absent') AS absent,
             (SELECT COALESCE(SUM(pages), 0) FROM daily_records d WHERE d.student_id = s.id) AS pages,
             (SELECT COALESCE(SUM(review_pages), 0) FROM daily_records d WHERE d.student_id = s.id) AS reviewPages,

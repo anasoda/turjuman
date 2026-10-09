@@ -8,12 +8,12 @@ import { useFetch, useUrlState } from "../lib/hooks";
 interface CircleRow {
   id: string; name: string; status: CircleDayStatus; students: number; cancelReason: string | null; noSchedule: boolean;
   teachers: Array<{ id: string; name: string; kind: "primary" | "assistant" }>;
-  recorded: number; present: number; late: number; absent: number; excused: number;
+  recorded: number; present: number; late: number; absent: number; excused: number; notMemorized: number;
   hifzStudents: number; hifzPages: number; reviewStudents: number; reviewPages: number; remindedAt: number | null;
 }
 interface DayData {
   date: string; weekday: string; isToday: boolean; circles: CircleRow[];
-  totals: { circles: number; pending: number; complete: number; students: number; recorded: number; present: number; late: number; absent: number; excused: number;
+  totals: { circles: number; pending: number; complete: number; students: number; recorded: number; present: number; late: number; absent: number; excused: number; notMemorized: number;
     hifzStudents: number; hifzPages: number; reviewStudents: number; reviewPages: number };
 }
 
@@ -76,6 +76,7 @@ export function CircleDay() {
             <Stat value={t.present + t.late} label="حضور" />
             <Stat value={t.absent} label="غياب" tone={t.absent ? "bad" : ""} />
             <Stat value={t.excused} label="بعذر" />
+            <Stat value={t.notMemorized} label="مش حافظ" tone={t.notMemorized ? "bad" : ""} />
             <Stat value={t.reviewPages} label="صفحات المراجعة" />
           </div>
 
@@ -101,7 +102,7 @@ export function CircleDay() {
                       </div>
                       <div className="progress"><i style={{ width: `${pct}%` }} /></div>
                       <div className="muted" style={{ fontSize: ".85rem" }}>
-                        حضور {c.present} · تأخر {c.late} · غياب {c.absent} · بعذر {c.excused}
+                        حضور {c.present} · تأخر {c.late} · غياب {c.absent} · بعذر {c.excused}{c.notMemorized > 0 && <> · مش حافظ {c.notMemorized}</>}
                       </div>
                       <div style={{ fontSize: ".88rem" }}>
                         الحفظ: <b>{c.hifzStudents}</b> طالب · <b>{c.hifzPages}</b> صفحة

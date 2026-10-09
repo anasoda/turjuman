@@ -57,6 +57,12 @@ await test("«بعذر» يُقبل بلا نطاق تسميع مع سبب ال�
   assert.equal(r.data.pages, 0);
 });
 
+await test("«مش حافظ» يُقبل بلا نطاق ولا ملاحظة ولا يُسجَّل له حفظ", async () => {
+  const r = await post({ date: getValidDay(25), attendance: "not_memorized" });
+  assert.ok([200, 201].includes(r.status), JSON.stringify(r.data));
+  assert.equal(r.data.pages, 0);
+});
+
 await test("«بعذر» و«متأخر» بلا ملاحظة مرفوضان", async () => {
   assert.equal((await post({ date: D_INVALID_1, attendance: "excused", note: "" })).status, 400);
   assert.equal((await post({ date: D_INVALID_1, attendance: "late", from: start, to: start, note: "" })).status, 400);

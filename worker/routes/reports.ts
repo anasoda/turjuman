@@ -30,6 +30,7 @@ export interface ReportRow {
   late: number;
   absent: number;
   excused: number;
+  notMemorized: number;
   verses: number;
   pages: number;
   start: Position | null;
@@ -110,6 +111,7 @@ export async function buildReportRows(db: D1Database, centerId: string, month: s
       late: mine.filter((d) => d.attendance === "late").length,
       absent: mine.filter((d) => d.attendance === "absent").length,
       excused: mine.filter((d) => d.attendance === "excused").length,
+      notMemorized: mine.filter((d) => d.attendance === "not_memorized").length,
       verses: done.reduce((n, d) => n + d.verses, 0),
       pages, start, end, daily: mine,
       juz: completedJuz(s.direction, end ?? { surah: s.lastSurah, ayah: s.lastAyah }),
@@ -310,7 +312,7 @@ portalRoutes.get("/card", requireAuth("student", "guardian"), async (c) => {
   return c.json({
     student: { id: student.id, name: student.name, circleName: student.circleName },
     period, from, to,
-    attendance: { sessions: rows.length, present: count("present"), late: count("late"), absent: count("absent"), excused: count("excused") },
+    attendance: { sessions: rows.length, present: count("present"), late: count("late"), absent: count("absent"), excused: count("excused"), notMemorized: count("not_memorized") },
     pages: rows.reduce((n, r) => n + (r.pages ?? 0), 0),
     reviewPages: rows.reduce((n, r) => n + (r.reviewPages ?? 0), 0),
     month: { pages: current.pages, planPages: current.planPages, percent: current.percent, reviewPages: current.reviewPages, reviewPlanPages: current.reviewPlanPages, reviewPercent: current.reviewPercent },
@@ -361,7 +363,7 @@ async function studentSummary(c: Context<AppEnv>, student: StudentRow & { memori
 
   return {
     student: { ...student, monthlyPlanPages: current.planPages, memorizedParts: completedJuz(student.direction, { surah: student.lastSurah, ayah: student.lastAyah }), nextStart: nextStart(student.direction, { surah: student.lastSurah, ayah: student.lastAyah }), reviewLast },
-    month: { month, pages: current.pages, planPages: current.planPages, percent: current.percent, present: current.present, absent: current.absent, excused: current.excused,
+    month: { month, pages: current.pages, planPages: current.planPages, percent: current.percent, present: current.present, absent: current.absent, excused: current.excused, notMemorized: current.notMemorized,
       reviewPages: current.reviewPages, reviewPlanPages: current.reviewPlanPages, reviewPercent: current.reviewPercent },
     daily, tests, sard, reports
   };

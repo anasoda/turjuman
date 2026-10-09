@@ -11,7 +11,7 @@ import type { Student } from "../lib/types";
 
 interface Summary {
   student: { id: string; name: string; direction: Direction; lastSurah: number; lastAyah: number; monthlyPlanPages: number; circleName: string | null; reviewLast: Position | null };
-  month: { month: string; pages: number; planPages: number; percent: number; present: number; absent: number; excused: number; reviewPages: number; reviewPlanPages: number; reviewPercent: number };
+  month: { month: string; pages: number; planPages: number; percent: number; present: number; absent: number; excused: number; notMemorized: number; reviewPages: number; reviewPlanPages: number; reviewPercent: number };
   daily: Array<{ date: string; attendance: Attendance; fromSurah: number | null; fromAyah: number | null; toSurah: number | null; toAyah: number | null; pages: number; grade: string; note: string; reviewFromSurah: number | null; reviewFromAyah: number | null; reviewToSurah: number | null; reviewToAyah: number | null; reviewPages: number; reviewGrade: string }>;
   tests: Array<{ id: string; kind: string; status: string; testType: string; parts: number; rangeText: string; testDate: string | null; score: number | null; passed: number | null }>;
   sard: Array<{ id: string; date: string; stage: string; verses: number; mistakes: number; alerts: number; score: number; band: string }>;
@@ -82,7 +82,7 @@ export function PrintStudent() {
             <dt>آخر مراجعة</dt><dd>{s.reviewLast ? fmtPosPage(s.reviewLast) : "لا مراجعة مسجّلة"}</dd>
             <dt>الحفظ هذا الشهر</dt><dd>{summary.data.month.pages} من {summary.data.month.planPages} صفحة ({summary.data.month.percent}%)</dd>
             <dt>المراجعة هذا الشهر</dt><dd>{summary.data.month.reviewPages} من {summary.data.month.reviewPlanPages} صفحة ({summary.data.month.reviewPercent}%)</dd>
-            <dt>الحضور هذا الشهر</dt><dd>حضور {summary.data.month.present} · غياب {summary.data.month.absent} · بعذر {summary.data.month.excused}</dd>
+            <dt>الحضور هذا الشهر</dt><dd>حضور {summary.data.month.present} · غياب {summary.data.month.absent} · بعذر {summary.data.month.excused}{summary.data.month.notMemorized > 0 && ` · مش حافظ ${summary.data.month.notMemorized}`}</dd>
           </dl>
           <h3 style={{ marginTop: 14 }}>آخر التسميع والمراجعة</h3>
           <table style={{ width: "100%", fontSize: ".85rem" }}><tbody>{summary.data.daily.slice(0, 12).map((d) => <tr key={d.date}><td>{fmtDay(d.date)}</td><td>{ATTENDANCE_LABELS[d.attendance]}</td><td>{d.reviewFromSurah ? `مراجعة: ${fmtPos({ surah: d.reviewFromSurah, ayah: d.reviewFromAyah! })} ← ${fmtPos({ surah: d.reviewToSurah!, ayah: d.reviewToAyah! })} · ${d.reviewPages} ص` : ""}{d.fromSurah && <div>حفظ: {fmtPos({ surah: d.fromSurah, ayah: d.fromAyah! })} ← {fmtPos({ surah: d.toSurah!, ayah: d.toAyah! })} · {d.pages} ص</div>}</td><td>{d.reviewGrade && `مراجعة: ${d.reviewGrade}`}{d.grade && <div>حفظ: {d.grade}</div>}</td></tr>)}</tbody></table>

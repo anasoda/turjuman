@@ -15,7 +15,7 @@ import { FollowUpCard } from "./FollowUpCard";
 
 interface Summary {
   student: { id: string; name: string; direction: Direction; lastSurah: number; lastAyah: number; circleName: string | null; nextStart: Position | null; reviewLast: Position | null };
-  month: { month: string; pages: number; planPages: number; percent: number; present: number; absent: number; excused: number; reviewPages: number; reviewPlanPages: number; reviewPercent: number };
+  month: { month: string; pages: number; planPages: number; percent: number; present: number; absent: number; excused: number; notMemorized: number; reviewPages: number; reviewPlanPages: number; reviewPercent: number };
   daily: Array<{ date: string; attendance: Attendance; fromSurah: number | null; fromAyah: number | null; toSurah: number | null; toAyah: number | null; verses: number; pages: number; grade: string; note: string; reviewFromSurah: number | null; reviewFromAyah: number | null; reviewToSurah: number | null; reviewToAyah: number | null; reviewPages: number; reviewGrade: string }>;
   tests: Array<{ id: string; kind: string; status: string; testType: string; parts: number; rangeText: string; testDate: string | null; score: number | null; passed: number | null; notes: string }>;
   sard: Array<{ id: string; date: string; stage: string; fromSurah: number; fromAyah: number; toSurah: number; toAyah: number; verses: number; mistakes: number; alerts: number; score: number; band: string }>;
@@ -69,7 +69,7 @@ export function StudentPortal({ studentId }: { studentId?: string } = {}) {
         )}
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".92rem", marginTop: 10 }}><span>المراجعة: {m.reviewPages} من {m.reviewPlanPages} صفحة</span><b>{m.reviewPercent}%</b></div>
         <div className="progress"><i style={{ width: `${Math.min(100, m.reviewPercent)}%` }} /></div>
-        <small className="muted">حضور {m.present} · غياب {m.absent} · بعذر {m.excused}</small>
+        <small className="muted">حضور {m.present} · غياب {m.absent} · بعذر {m.excused}{m.notMemorized > 0 && ` · مش حافظ ${m.notMemorized}`}</small>
       </div>
       </div>
       <div className="actions"><button className="btn ghost small" type="button" disabled={busy} onClick={() => { if (progressRef.current) void run(() => saveAsImage(progressRef.current!, `إنجاز-${s.name}-${m.month}`), "تم حفظ صورة الإنجاز"); }}>تصدير الإنجاز كصورة</button></div>

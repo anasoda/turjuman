@@ -9,7 +9,7 @@ type DailyInput = { studentId: string; date: string; attendance: string; from: P
 type StaffInput = { userId: string; date: string; status: string; note: string };
 type ReportInput = { month: string; rows: Array<{ studentId: string; end: Position | null }> };
 type DailySource = { student_id: string; date: string; attendance: string; from_surah: number | null; from_ayah: number | null; to_surah: number | null; to_ayah: number | null; verses: number; review_from_surah: number | null; review_from_ayah: number | null; review_to_surah: number | null; review_to_ayah: number | null };
-type ReportRow = { studentId: string; direction: Direction; planPages: number; reviewPlanPages: number; saved: boolean; daily?: DailySource[]; start: Position | null; end: Position | null; present: number; absent: number; late: number; excused: number; verses: number; pages: number; percent: number; reviewPages: number; reviewPercent: number; reviewDays: number };
+type ReportRow = { studentId: string; direction: Direction; planPages: number; reviewPlanPages: number; saved: boolean; daily?: DailySource[]; start: Position | null; end: Position | null; present: number; absent: number; late: number; excused: number; notMemorized: number; verses: number; pages: number; percent: number; reviewPages: number; reviewPercent: number; reviewDays: number };
 
 const position = (surah: number | null, ayah: number | null): Position | null => surah && ayah ? { surah, ayah } : null;
 const body = <T>(item: OutboxItem): T => item.body as T;
@@ -113,6 +113,7 @@ function reportRow(row: ReportRow, dailyItems: OutboxItem[]): ReportRow {
     late: all.filter((d) => d.attendance === "late").length,
     absent: all.filter((d) => d.attendance === "absent").length,
     excused: all.filter((d) => d.attendance === "excused").length,
+    notMemorized: all.filter((d) => d.attendance === "not_memorized").length,
     verses: done.reduce((n, d) => n + d.verses, 0), pages, percent: planPercent(pages, row.planPages),
     reviewPages, reviewPercent: planPercent(reviewPages, row.reviewPlanPages), reviewDays: reviewed.length,
     pending: true

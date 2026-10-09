@@ -12,7 +12,7 @@ import { useMe } from "../lib/session";
 import type { Circle } from "../lib/types";
 
 interface Row {
-  studentId: string; name: string; direction: Direction; planPages: number; present: number; late: number; absent: number; excused: number;
+  studentId: string; name: string; direction: Direction; planPages: number; present: number; late: number; absent: number; excused: number; notMemorized: number;
   verses: number; pages: number; start: Position | null; end: Position | null; percent: number; saved: boolean;
   reviewPages: number; reviewPlanPages: number; reviewPercent: number; reviewDays: number; pending?: boolean;
 }
@@ -88,7 +88,7 @@ export function Reports() {
               <div className="muted" style={{ fontSize: ".9rem" }}>
                 {r.start && v.end && v.pages > 0 ? `الحفظ: ${fmtPosPage(r.start)} ← ${fmtPosPage(v.end)}` : "لا حفظ جديد مسجَّل هذا الشهر"}
               </div>
-              <div className="muted" style={{ fontSize: ".85rem" }}>حضور {r.present} · تأخر {r.late} · غياب {r.absent} · بعذر {r.excused} · {r.verses} آية</div>
+              <div className="muted" style={{ fontSize: ".85rem" }}>حضور {r.present} · تأخر {r.late} · غياب {r.absent} · بعذر {r.excused}{r.notMemorized > 0 && <> · مش حافظ {r.notMemorized}</>} · {r.verses} آية</div>
               <div style={{ marginTop: 6 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".88rem" }}><span>الحفظ: {v.pages} من {r.planPages} صفحة</span><b>{v.percent}%</b></div>
                 <div style={{ height: 8, borderRadius: 4, background: "var(--line)", overflow: "hidden" }}><div style={{ height: "100%", width: `${Math.min(100, v.percent)}%`, background: v.percent >= 100 ? "var(--ok)" : "var(--green-2)" }} /></div>

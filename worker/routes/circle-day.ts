@@ -17,10 +17,10 @@ const REMINDER_KIND = "record_reminder";
 const REMINDER_COOLDOWN_MS = 60 * 60 * 1000;
 
 interface DayStats {
-  recorded: number; present: number; late: number; absent: number; excused: number;
+  recorded: number; present: number; late: number; absent: number; excused: number; notMemorized: number;
   hifzStudents: number; hifzPages: number; reviewStudents: number; reviewPages: number;
 }
-const ZERO: DayStats = { recorded: 0, present: 0, late: 0, absent: 0, excused: 0, hifzStudents: 0, hifzPages: 0, reviewStudents: 0, reviewPages: 0 };
+const ZERO: DayStats = { recorded: 0, present: 0, late: 0, absent: 0, excused: 0, notMemorized: 0, hifzStudents: 0, hifzPages: 0, reviewStudents: 0, reviewPages: 0 };
 const weekdayOf = (date: string) => new Date(`${date}T00:00:00Z`).getUTCDay();
 
 /** متابعة سير الحلقات في يوم: الحضور والغياب وصفحات الحفظ وعدد من سُجّل حفظهم، لكل حلقة. */
@@ -48,7 +48,7 @@ circleDayRoutes.get("/", requireAuth("admin", "secretary", "stage_manager"), asy
       `SELECT COALESCE(d.circle_id, ${circleOnSql("s")}) AS circleId,
               COUNT(*) AS recorded,
               SUM(d.attendance = 'present') AS present, SUM(d.attendance = 'late') AS late,
-              SUM(d.attendance = 'absent') AS absent, SUM(d.attendance = 'excused') AS excused,
+              SUM(d.attendance = 'absent') AS absent, SUM(d.attendance = 'excused') AS excused, SUM(d.attendance = 'not_memorized') AS notMemorized,
               SUM(CASE WHEN d.attendance IN ('present','late') AND d.from_surah IS NOT NULL THEN 1 ELSE 0 END) AS hifzStudents,
               SUM(CASE WHEN d.attendance IN ('present','late') AND d.from_surah IS NOT NULL THEN d.pages ELSE 0 END) AS hifzPages,
               SUM(CASE WHEN d.attendance IN ('present','late') AND d.review_from_surah IS NOT NULL THEN 1 ELSE 0 END) AS reviewStudents,
@@ -76,7 +76,7 @@ circleDayRoutes.get("/", requireAuth("admin", "secretary", "stage_manager"), asy
       id: circle.id, name: circle.name, status, students, cancelReason: cancelBy.get(circle.id) ?? null,
       noSchedule: !days,
       teachers: teachersQ.results.filter((t) => t.circleId === circle.id).map((t) => ({ id: t.id, name: t.name, kind: t.kind })),
-      recorded: stats.recorded, present: stats.present, late: stats.late, absent: stats.absent, excused: stats.excused,
+      recorded: stats.recorded, present: stats.present, late: stats.late, absent: stats.absent, excused: stats.excused, notMemorized: stats.notMemorized,
       hifzStudents: stats.hifzStudents, hifzPages: stats.hifzPages, reviewStudents: stats.reviewStudents, reviewPages: stats.reviewPages,
       remindedAt: remindBy.get(circle.id) ?? null
     };
@@ -86,13 +86,13 @@ circleDayRoutes.get("/", requireAuth("admin", "secretary", "stage_manager"), asy
   circles.sort((a, b) => RANK[a.status] - RANK[b.status] || a.name.localeCompare(b.name, "ar"));
 
   const live = circles.filter((x) => x.status !== "cancelled" && x.status !== "off" && x.status !== "empty");
-  const sum = (k: "students" | "recorded" | "present" | "late" | "absent" | "excused" | "hifzStudents" | "hifzPages" | "reviewStudents" | "reviewPages") =>
+  const sum = (k: "students" | "recorded" | "present" | "late" | "absent" | "excused" | "notMemorized" | "hifzStudents" | "hifzPages" | "reviewStudents" | "reviewPages") =>
     circles.reduce((n, x) => n + x[k], 0);
   return c.json({
     date, weekday: weekdayNameAr(date), isToday: date === todayHebron(), circles,
     totals: {
       circles: circles.length, pending: live.filter((x) => x.status === "none" || x.status === "partial").length, complete: live.filter((x) => x.status === "complete").length,
-      students: sum("students"), recorded: sum("recorded"), present: sum("present"), late: sum("late"), absent: sum("absent"), excused: sum("excused"),
+      students: sum("students"), recorded: sum("recorded"), present: sum("present"), late: sum("late"), absent: sum("absent"), excused: sum("excused"), notMemorized: sum("notMemorized"),
       hifzStudents: sum("hifzStudents"), hifzPages: sum("hifzPages"), reviewStudents: sum("reviewStudents"), reviewPages: sum("reviewPages")
     }
   });
