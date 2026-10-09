@@ -3,7 +3,7 @@ import type { Direction } from "@shared/constants";
 import { countPages, countVerses, endAfterPages, isValidRange, mushafPageFor, nextStart, rangeDirection, type Position } from "@shared/quran";
 import { CancelSessionBar } from "../components/CancelSession";
 import { PositionPicker } from "../components/PositionPicker";
-import { Field, Sheet, useAction, useUi } from "../components/ui";
+import { Field, Icons, Sheet, useAction, useUi } from "../components/ui";
 import { api } from "../lib/api";
 import { ATTENDANCE_LABELS, fmtDay, fmtPos, todayIso, type Attendance } from "../lib/format";
 import { initials, useFetch, useUrlState } from "../lib/hooks";
@@ -180,18 +180,26 @@ function DailyForm({ date, monthSessions, student, record, onClose, onSaved }: {
   );
 
   return (
-    <Sheet title={student.name} onClose={onClose}>
+    <Sheet title="تسجيل التسميع" onClose={onClose}>
       <form className="form-grid" onSubmit={submit}>
-        <div className="radio-row" role="radiogroup" aria-label="الحضور">
+        <div className="rec-student">
+          <span className="avatar">{initials(student.name)}</span>
+          <span>
+            <b>{student.name}</b>
+            <small>{fmtDay(date)}{student.nextStart ? ` · يبدأ من ${fmtPos(student.nextStart)}` : ""}</small>
+          </span>
+        </div>
+        <div className="radio-row chips" role="radiogroup" aria-label="الحضور">
           {(Object.keys(ATTENDANCE_LABELS) as Attendance[]).map((a) => (
             <label key={a}><input type="radio" name="attendance" checked={attendance === a} onChange={() => setAttendance(a)} />{ATTENDANCE_LABELS[a]}</label>
           ))}
         </div>
         {attends && (
           <>
-            <section className="card" style={{ display: "grid", gap: 10 }}>
-              <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 700 }}>
-                <input type="checkbox" checked={doReview} onChange={(e) => setDoReview(e.target.checked)} style={{ width: 18, height: 18 }} />المراجعة (تُسجَّل أولاً)
+            <section className="rec-card">
+              <label className="rec-head">
+                <span className="ico-badge">{Icons.scroll}</span>المراجعة (تُسجَّل أولاً)
+                <input type="checkbox" checked={doReview} onChange={(e) => setDoReview(e.target.checked)} />
               </label>
               {doReview && (
                 <>
@@ -207,9 +215,10 @@ function DailyForm({ date, monthSessions, student, record, onClose, onSaved }: {
                 </>
               )}
             </section>
-            <section className="card" style={{ display: "grid", gap: 10 }}>
-              <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 700 }}>
-                <input type="checkbox" checked={doHifz} onChange={(e) => setDoHifz(e.target.checked)} style={{ width: 18, height: 18 }} />الحفظ الجديد
+            <section className="rec-card">
+              <label className="rec-head">
+                <span className="ico-badge">{Icons.book}</span>الحفظ الجديد
+                <input type="checkbox" checked={doHifz} onChange={(e) => setDoHifz(e.target.checked)} />
               </label>
               {doHifz && (
                 <>
@@ -227,8 +236,8 @@ function DailyForm({ date, monthSessions, student, record, onClose, onSaved }: {
               )}
             </section>
             {nothing && <div className="error-box">فعّل المراجعة أو الحفظ الجديد (واحداً على الأقل).</div>}
-            <section className="card" style={{ display: "grid", gap: 10 }}>
-              <b>المطلوب في اللقاء القادم</b>
+            <section className="rec-card">
+              <b className="rec-head"><span className="ico-badge">{Icons.calendar}</span>المطلوب في اللقاء القادم</b>
               <p className="muted" style={{ margin: 0, fontSize: ".85rem" }}>يمكن تحديد حفظ ومراجعة معاً؛ يُرسَل إشعاراً فورياً لولي الأمر بما هو مطلوب من الطالب في اللقاء القادم.</p>
               <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 700 }}>
                 <input type="checkbox" checked={doNextMemorize} onChange={(e) => { setDoNextMemorize(e.target.checked); if (e.target.checked && !hadNextMemorize && memShare > 0) setNMemTo(endAfterPages(dir, nMemFrom, memShare)); }} style={{ width: 18, height: 18 }} />حفظ
@@ -261,7 +270,7 @@ function DailyForm({ date, monthSessions, student, record, onClose, onSaved }: {
         <Field label={attendance === "excused" ? "سبب العذر (إجباري)" : attendance === "late" ? "سبب التأخر (إجباري)" : "ملاحظة لولي الأمر (اختياري)"}>
           <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} />
         </Field>
-        <div className="actions">
+        <div className="actions sticky-save">
           <button className="btn" disabled={busy || !valid || !noteOk}>{record ? "حفظ التعديل" : "حفظ"}</button>
           {record && !record.pending && <button className="btn ghost danger" type="button" onClick={() => void remove()}>حذف السجل</button>}
         </div>
